@@ -6,60 +6,60 @@ issue #1) and `git log`, then fix this file.
 
 ## Current phase
 
-Planning and an adversarial review pass are both complete. Architecture is now hardened, not
-just designed — a full review (`REVIEW.md`, 17 findings) has been run against it and every
-finding closed. This is the **implementation phase** — 15 build tickets across Node, Go, and
-the shared frontend, one of which (`#16`) is built.
+Implementation phase, Node track. Three of six Node tickets are built and merged: schema/
+scaffolding (`#16`), publish/async expansion (`#17`), and the delivery worker (`#18`). Node now
+has a working, live-verified publish → expand → deliver pipeline end to end, including real
+HTTP delivery to a public receiver. Go (`#22-27`) and the frontend (`#28-30`) haven't started.
 
 ## What just happened (most recent session)
 
-- **`CONTEXT.md` was built** via a `/grill-with-docs` (grilling + domain-modeling) session — 13
-  terms defining the project's ubiquitous language (Event, Delivery, Attempt, Endpoint, Tenant,
-  Receiver, Claim, Lease, Expansion, Replay, Queue, Halted, Blocked), each with an `_Avoid_`
-  list redirecting loose synonyms.
-- **An adversarial review (`REVIEW.md`) was run** against `ARCHITECTURE.md`/`DECISIONS.md`/
-  `CONTEXT.md`/`PRD.md`/`COMPARISON.md` by an external pass, surfacing 17 findings (4 Critical,
-  6 High, 3 Medium, 4 Low) plus a 6-item CASE_STUDY compliance checklist. **All 17 findings and
-  4 of 6 checklist items are now resolved** — see `REVIEW.md`'s burn-down table for exact status
-  per finding (most are "Fixed"; five are "Design fixed," meaning the schema/docs/ADR are
-  committed but the closing test needs the delivery worker, ticket `#18`, which doesn't exist
-  yet).
-- **Six new ADRs** were created in `docs/adr/` (`0001`–`0006`), each correcting a real design
-  gap the review found: per-tenant expansion serialization (ordering bug), lease fencing
-  (stalled-worker state corruption), sender-side multi-sign secret rotation (rotation was
-  silently halting endpoints), a stated tenant-fairness bound, async replay expansion (mirrors
-  publish, fixes a crash-unsafe idempotency gap), and SSRF resolve-validate-pin + no-redirects.
-- **Schema changed**: `events.seq`, `endpoints.lease_id`/`secondary_secret`/
-  `secondary_secret_expires_at`, `replays.status`, `tenants.api_key_hash` (renamed from
-  `api_key`). `node/src/db/migrations/001_init.sql` is current.
-- **Already-shipped code (`#16`) was fixed and re-verified live**, twice: secret rotation
-  storage, `resume`'s `skipped_failed_delivery_ids` disclosure, and credential handling
-  (API keys now SHA-256-hashed, signing secrets AES-256-GCM-encrypted at rest — both tested
-  end-to-end against a real Postgres instance, including a full encrypt/decrypt round-trip
-  check). `npm run typecheck` passes clean throughout.
-- **`DECISIONS.md` was compressed** from a peak of ~2644 words (absorbing all 17 findings) to
-  ~1472, leaning on the new `docs/adr/` files for detail instead of re-explaining inline.
-- **C-1** (the `reqs not read` omission note) restored to the top of `README.md` — it had gone
-  missing in an earlier edit. **Update**: the user removed it again themselves in a later
-  session (commit `0af1d5b`, "remove wording from readme") and confirmed during ticket #17's
-  code review that this second removal is intentional, not a repeat of the earlier accident —
-  don't re-restore it. **C-3**: user confirmed willing to share session transcripts; noted in
-  `README.md`. **C-2** (time spent) is still open — genuinely needs the user's answer, can't be
-  filled in by an agent.
-- Every Mermaid diagram in `ARCHITECTURE.md` (8 total) was validated against the real parser,
-  not just eyeballed — this caught real syntax bugs (HTML entities and mid-message semicolons
-  break Mermaid's sequence-diagram grammar) more than once this session.
+- **`#18` — [Node] Delivery worker built and merged** (MR !2, branch `18-node-delivery-worker`,
+  off an up-to-date `main` after `#17`'s MR !1 was found already merged). TDD throughout, seams
+  confirmed with the user first. New modules: `node/src/worker/delivery.ts` (`claimDelivery`,
+  `completeDelivery`, `computeBackoffDelayMs`, `runDeliveryCycle`), `node/src/worker/
+  httpClient.ts` (`resolveAndPin`, `sendOutboundRequest` — the SSRF-safe pinned HTTP client),
+  `node/src/lib/signing.ts` (`signPayload`, multi-secret HMAC). `worker.ts` now runs expansion
+  and delivery in one shared poll loop, not two processes.
+  - This is what **closes the five "Design fixed" `REVIEW.md` findings** (F-1, F-2, F-5, F-8,
+    F-10) that were waiting on the delivery worker to exist — their closing behavior (advisory
+    locks, lease fencing, tenant fairness, resolve-validate-pin) is now real, running code with
+    passing tests, not just schema/ADRs.
+  - **Live-verified against real infrastructure, not mocks**: registered an endpoint pointing at
+    `https://httpbin.org/post` through the real API (real registration-time SSRF check passed),
+    published an event, and watched the real running worker process expand → claim → sign →
+    resolve-validate-pin (real DNS) → deliver → mark succeeded. httpbin's echo response
+    confirmed every `Webhook-*` header and the exact signature.
+  - `/code-review` (Standards + Spec axes) surfaced two real, acted-on findings: missing test
+    coverage for the ADR-0003 multi-secret-signing rotation path (added), and `errorClass`
+    typed as a bare `string` instead of a closed union (fixed in both `httpClient.ts` and
+    `delivery.ts`). Also caught and fixed a genuine flaky-test bug unrelated to the review: the
+    `createPendingDelivery` fixture compared a Node-clock timestamp against Postgres's own
+    `now()`, which real Node/Docker-Postgres clock skew made intermittently false — confined to
+    test fixtures, never a production bug (see `progress.md`'s gotchas).
+  - Config cleanup: `outboundHttp.maxRedirects` removed (dead — superseded by
+    `docs/adr/0006`'s "never follow redirects"), `maxConnectionsPerHost` added (R-16's per-host
+    limit, via `http.Agent`/`https.Agent`'s `maxSockets`).
+- **`#17` — [Node] Publish & async expansion, previously built, confirmed merged** (MR !1 — was
+  already merged, likely by the user directly, before this session checked).
+- **A stale README disclosure line was removed a second time**, by the user directly (commit
+  `0af1d5b`, outside any agent session) — confirmed during `#18`'s planning that this is
+  intentional this time, not a repeat of the earlier accident noted below `#17`'s entry. Don't
+  re-restore it.
 
 ## Next steps (unblocked, parallel-eligible)
 
-- `#17` — [Node] Publish & async expansion (unblocked by `#16`; must implement the per-tenant
-  advisory-lock serialization from `docs/adr/0001`, not the naive parallel version).
-- `#22` — [Go] Schema, scaffolding & endpoint management API (mirrors `#16`, including all the
-  review-driven fixes — the Go schema must match Node's post-review schema exactly, not the
-  pre-review one).
+- `#19` — [Node] Replay (unblocked by `#18`; must implement `docs/adr/0005`'s async replay
+  expansion, mirroring publish's pattern — not a naive synchronous re-delivery loop).
+- `#20` — [Node] Visibility & read API (unblocked by `#18`).
+- `#21` — [Node] Test suite & deployment — owns `make chaos`/`make properties`/`make load`, the
+  actual closing tests for review findings F-1/F-2/F-5/F-8/F-10 and `docs/adr/0004`'s stated
+  tarpit-tenant fairness bound (both now implementable since `#18` exists).
+- `#22` — [Go] Schema, scaffolding & endpoint management API (mirrors `#16`, unblocked, fully
+  independent of the Node track).
 - `#28` — Frontend: API client & endpoint management UI (buildable now against the fixed REST
   contract).
-- Not urgent, but real: commit the current working tree (see `progress.md` / `git status`).
+- MR !2 (`#18`) is open, not yet merged into `main` — confirm with the user before merging, same
+  as was done for !1.
 
 ## Open questions / risks being watched
 
@@ -67,11 +67,8 @@ the shared frontend, one of which (`#16`) is built.
 - Timebox: building two full implementations was a deliberate scope choice, with an explicit
   accepted fallback now written into `DECISIONS.md`'s Submission section (ship Node alone if Go
   isn't at parity by the timebox's midpoint).
-- `DECISIONS.md` is still somewhat over the "about two pages" budget (~1472 words vs. the
-  original ~1050) — expected, since it now records 17 additional fixes on top of the original
-  14 decisions, not the same content restated. Judged acceptable, not further compressed.
-- The five "Design fixed" (not yet "Fixed") review findings (F-1, F-2, F-5, F-8, F-10) all share
-  the same blocker: their closing tests need the delivery worker (`#18`). Whoever builds `#18`
-  should read those findings' resolution notes in `REVIEW.md` first — they specify exact
-  mechanisms (advisory locks, lease fencing, resolve-validate-pin) that must be implemented
-  correctly, not just "however seems reasonable."
+- The unit/integration test suite (vitest, real Postgres) deliberately does **not** cover real
+  multi-worker concurrency races (two processes actually contending over one endpoint's busy
+  flag) — that's explicitly deferred to `#21`'s chaos suite, same precedent set when `#17` was
+  built. `#18`'s `claimDelivery` does have one concurrency test (two *different* endpoints
+  claimed in parallel via `Promise.all` against the real pool), but not a same-endpoint race.
