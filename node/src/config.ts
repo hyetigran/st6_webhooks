@@ -81,6 +81,13 @@ export const server = {
   port: envInt("PORT", 3000),
 };
 
+export const worker = {
+  // How long to wait before polling again after a cycle found nothing to
+  // do. 0 when a cycle did find work, so the worker drains a backlog
+  // immediately rather than waiting out a full idle interval per item.
+  idlePollIntervalMs: envInt("WORKER_IDLE_POLL_INTERVAL_MS", 200),
+};
+
 export const db = {
   connectionString: envString("DATABASE_URL", "postgres://webhooks:webhooks@localhost:5532/webhooks_node"),
 };

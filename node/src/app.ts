@@ -1,6 +1,7 @@
 import express from "express";
 import { requireTenant } from "./auth/middleware.js";
 import { endpointsRouter } from "./routes/endpoints.js";
+import { eventsRouter } from "./routes/events.js";
 
 export function createApp() {
   const app = express();
@@ -10,7 +11,7 @@ export function createApp() {
     res.json({ ok: true });
   });
 
-  app.use(requireTenant, endpointsRouter);
+  app.use(requireTenant, endpointsRouter, eventsRouter);
 
   app.use((_req, res) => {
     res.status(404).json({ error: { code: "not_found", message: "Not found" } });
