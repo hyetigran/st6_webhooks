@@ -31,12 +31,15 @@ export const backoff = {
   maxAttempts: envInt("BACKOFF_MAX_ATTEMPTS", 6),
 };
 
-// Outbound HTTP call bounds (R-16).
+// Outbound HTTP call bounds (R-16). No maxRedirects — docs/adr/0006 replaced
+// "bounded redirect count" with "never follow redirects" (a hop-count limit
+// bounds count, not destination; a registered URL that 302s to a metadata
+// address sails through untouched), so there's nothing to bound here.
 export const outboundHttp = {
   connectTimeoutMs: envInt("OUTBOUND_CONNECT_TIMEOUT_MS", 5_000),
   totalTimeoutMs: envInt("OUTBOUND_TOTAL_TIMEOUT_MS", 10_000),
   maxResponseBodyBytes: envInt("OUTBOUND_MAX_RESPONSE_BODY_BYTES", 64 * 1024),
-  maxRedirects: envInt("OUTBOUND_MAX_REDIRECTS", 3),
+  maxConnectionsPerHost: envInt("OUTBOUND_MAX_CONNECTIONS_PER_HOST", 10),
 };
 
 // Lease duration for crash recovery (ADR-003): derived from the outbound HTTP
