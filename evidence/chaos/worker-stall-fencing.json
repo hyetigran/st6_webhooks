@@ -1,0 +1,8 @@
+{
+  "scenario": "worker-stall-fencing",
+  "timestamp": "2026-08-06T23:16:14.863Z",
+  "status": "pass",
+  "durationMs": 4357,
+  "attemptCount": 2,
+  "finalState": "succeeded"
+}

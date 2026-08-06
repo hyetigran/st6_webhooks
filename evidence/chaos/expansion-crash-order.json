@@ -1,0 +1,10 @@
+{
+  "scenario": "expansion-crash-order",
+  "timestamp": "2026-08-06T23:16:20.093Z",
+  "status": "pass",
+  "durationMs": 266,
+  "expandedOrder": [
+    "af7fad4b-9670-4800-9156-f6814dc40f46",
+    "7a1e5e2b-5ce4-4a2d-b4e5-8f1a802bafad"
+  ]
+}

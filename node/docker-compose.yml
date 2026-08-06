@@ -28,10 +28,9 @@ services:
       postgres:
         condition: service_healthy
 
-  # Shared worker pool (DECISIONS.md): one process, not one per mechanism.
-  # Currently runs expansion only; the delivery-claim loop from the
-  # "Delivery worker: ordering, crash recovery, fairness, signing, backoff &
-  # halt" ticket joins this same entrypoint rather than adding a service.
+  # Shared worker pool (DECISIONS.md): one process, not one per mechanism —
+  # runs expansion, delivery, and replay expansion in a single poll loop
+  # (src/worker.ts), not three separate services.
   worker:
     build: .
     command: sh -c "npm run migrate:prod && npm run start:worker"

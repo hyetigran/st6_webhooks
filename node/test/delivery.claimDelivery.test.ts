@@ -79,6 +79,45 @@ describe("claimDelivery", () => {
     expect(claimed!.endpointId).toBe(quietEndpoint.id);
   });
 
+  it("never jumps ahead to a later, immediately-eligible delivery while the head is still cooling down from backoff (R-11)", async () => {
+    // Found via chaos testing (make chaos's partition-head scenario): an
+    // earlier version of the delivery-pick query filtered on
+    // next_attempt_at <= now(), which let it skip past an ineligible head
+    // to grab a later delivery that happened to be ready — violating strict
+    // per-endpoint order the moment a head is mid-backoff, not just when a
+    // worker is stalled or dead.
+    const { id: tenantId } = await createTenant();
+    const endpoint = await createEndpoint(tenantId, ["order.created"]);
+    const head = await createDelivery(tenantId, endpoint.id, { nextAttemptAt: new Date(Date.now() + 60_000) });
+    const follower = await createDelivery(tenantId, endpoint.id); // next_attempt_at defaults to now — immediately eligible
+
+    const claimed = await claimDelivery(pool, LEASE_DURATION_MS);
+
+    expect(claimed).toBeNull();
+    const { rows } = await pool.query<{ id: string; state: string }>("SELECT id, state FROM deliveries WHERE id = ANY($1)", [
+      [head.id, follower.id],
+    ]);
+    expect(rows.every((r) => r.state === "pending")).toBe(true); // neither was claimed
+
+    // Once the head's cooldown actually elapses, it — not the follower —
+    // is what gets claimed next.
+    await pool.query("UPDATE deliveries SET next_attempt_at = now() WHERE id = $1", [head.id]);
+    const claimedAfterCooldown = await claimDelivery(pool, LEASE_DURATION_MS);
+    expect(claimedAfterCooldown!.deliveryId).toBe(head.id);
+  });
+
+  it("never claims a paused endpoint's delivery, even though it accumulates (R-4)", async () => {
+    const { id: tenantId } = await createTenant();
+    const endpoint = await createEndpoint(tenantId, ["order.created"], { status: "paused" });
+    const delivery = await createDelivery(tenantId, endpoint.id);
+
+    const claimed = await claimDelivery(pool, LEASE_DURATION_MS);
+
+    expect(claimed).toBeNull();
+    const { rows } = await pool.query<{ state: string }>("SELECT state FROM deliveries WHERE id = $1", [delivery.id]);
+    expect(rows[0]!.state).toBe("pending"); // accumulated, not discarded
+  });
+
   it("returns null when the only pending delivery's endpoint is already busy within its lease", async () => {
     const { id: tenantId } = await createTenant();
     const endpoint = await createEndpoint(tenantId, ["order.created"]);
