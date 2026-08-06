@@ -16,16 +16,16 @@ close with a commit to the named section instead of a command.
 
 | ID       | Sev      | Finding                                                                                | Reqs                                                       | Primary location                                | Status |
 | -------- | -------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------- | ------ |
-| F-1      | Critical | Async expansion breaks per-endpoint publication order                                  | R-8, R-11                                                  | ARCHITECTURE expansion loop; DECISIONS ordering | Design fixed |
-| F-2      | Critical | Lease has no fencing; stalled worker breaks one-in-flight                              | R-11, R-15, R-17                                           | ARCHITECTURE crash recovery; DECISIONS          | Design fixed |
-| F-3      | Critical | Secret rotation as designed halts endpoints                                            | R-3 (× R-13/R-14)                                          | DECISIONS receiver contract                     | Partially fixed |
+| F-1      | Critical | Async expansion breaks per-endpoint publication order                                  | R-8, R-11                                                  | ARCHITECTURE expansion loop; DECISIONS ordering | Fixed |
+| F-2      | Critical | Lease has no fencing; stalled worker breaks one-in-flight                              | R-11, R-15, R-17                                           | ARCHITECTURE crash recovery; DECISIONS          | Fixed |
+| F-3      | Critical | Secret rotation as designed halts endpoints                                            | R-3 (× R-13/R-14)                                          | DECISIONS receiver contract                     | Fixed |
 | F-4      | Critical | DECISIONS asserts evidence that doesn't exist yet                                      | —                                                          | DECISIONS platform + submission sections        | Fixed  |
-| F-5      | High     | Fairness is per-claim, not per-capacity                                                | R-18                                                       | DECISIONS fairness; PRD §8 load row             | Design fixed |
+| F-5      | High     | Fairness is per-claim, not per-capacity                                                | R-18                                                       | DECISIONS fairness; PRD §8 load row             | Fixed |
 | F-6      | High     | "~61s" is arithmetically inconsistent with the stated parameters                       | R-13, R-14                                                 | DECISIONS retries; COMPARISON ratios            | Fixed  |
 | F-7      | High     | Stretch-goal contradictions presented as compliance                                    | R-14, R-22                                                 | PRD §9; DECISIONS; CASE_STUDY stretch 1–2       | Fixed  |
-| F-8      | High     | Replay: O(window) API path, crash-unsafe idempotency, pending-row duplication          | R-8, R-19, R-21, R-22                                      | ARCHITECTURE replay sequence                    | Design fixed |
-| F-9      | High     | Acceptance table fails the PRD's own standard                                          | R-3, R-4, R-9, R-10, R-13, R-14, R-19, R-20, R-22, R-23–25 | PRD §8                                          | Partially fixed |
-| F-10     | High     | SSRF defense loses to redirects and DNS rebinding                                      | R-2, R-16                                                  | PRD R-2/R-16; `make test` row                   | Design fixed |
+| F-8      | High     | Replay: O(window) API path, crash-unsafe idempotency, pending-row duplication          | R-8, R-19, R-21, R-22                                      | ARCHITECTURE replay sequence                    | Fixed |
+| F-9      | High     | Acceptance table fails the PRD's own standard                                          | R-3, R-4, R-9, R-10, R-13, R-14, R-19, R-20, R-22, R-23–25 | PRD §8                                          | Fixed |
+| F-10     | High     | SSRF defense loses to redirects and DNS rebinding                                      | R-2, R-16                                                  | PRD R-2/R-16; `make test` row                   | Fixed |
 | F-11     | Medium   | `ON CONFLICT DO NOTHING` returns no row; ER diagrams show wrong uniqueness             | R-6, R-21                                                  | ARCHITECTURE publish/replay diagrams + ER       | Fixed  |
 | F-12     | Medium   | Resume permanently skips the failed head; confirmation loophole; claim-eligibility gap | R-12, R-14, R-4                                            | ARCHITECTURE state diagrams                     | Fixed  |
 | F-13     | Medium   | Receiver contract's dedupe rule can defeat replay                                      | R-20, PRD §6                                               | PRD §6                                          | Fixed  |
@@ -79,10 +79,22 @@ delivery order equals `events.seq` order.
 schema (`node/src/db/migrations/001_init.sql`), `DECISIONS.md` ("Publishing, expansion, and
 replay"), and `ARCHITECTURE.md` (ER diagram, expansion sequence diagram, core-mechanisms bullet)
 all updated to match.
-**Status:** Design fixed — schema and docs committed. Stays short of "Fixed" under this file's
-own convention until the closing `make chaos`/`make properties` commands exist and pass; that
-requires the delivery worker, which is ticket #18 on the project's issue tracker and not yet
-built. Re-status to `Fixed` once that ticket closes with the named tests green.
+**Status:** Fixed. Both named closing scenarios pass: `make chaos`'s
+`expansion-crash-order.ts` — a real process is `SIGKILL`ed while holding a tenant's expansion
+advisory lock, having done zero work (the closest real analogue to "stall/kill E1's
+expansion"), then a real subsequent expansion is confirmed to still process strictly in publish
+order, proving `docs/adr/0001`'s core claim that the advisory lock's automatic release on
+transaction abort needs no lease or reaper; and `make properties`'s
+`expansionOrder.property.test.ts` (a randomized number of events, expanded by racing several
+concurrent-but-healthy workers) confirms the per-tenant serialization holds under real
+concurrency generally, not just the sequential case `expansion.test.ts` already covered. A
+separate `make chaos` scenario, `partition-head-blocked-then-drains.ts`, closes the related but
+distinct R-11/R-12 row ("fail a partition head; followers report Blocked, then drain in order
+on recovery") — not this finding specifically, but built alongside it and worth noting since it
+also surfaced a second, previously-undetected ordering bug in the *delivery* claim query (not
+expansion): it picked the oldest *eligible* pending delivery rather than the true head, letting
+a later delivery jump the queue while the head was mid-backoff. Fixed in
+`node/src/worker/delivery.ts`; regression-covered by a new `delivery.claimDelivery.test.ts` case.
 
 ### F-2 — The lease has no fence; a stalled worker breaks one-in-flight
 
@@ -116,9 +128,14 @@ overwriting state. Recorded as `docs/adr/0002-lease-fencing-token.md`; schema, `
 ("Ordering, concurrency, and fairness"), and `ARCHITECTURE.md` (schema comment + a new
 dedicated stall-fencing sequence diagram, kept separate from the existing dead-worker diagram
 since `kill -9` never needed fencing in the first place) all updated to match.
-**Status:** Design fixed — schema and docs committed. As with F-1, stays short of "Fixed" until
-the closing `SIGSTOP`/`SIGCONT` `make chaos` scenario exists and passes, which needs the
-delivery worker (ticket #18, not yet built) in both stacks.
+**Status:** Fixed. `make chaos`'s `worker-stall-fencing` scenario
+(`node/chaos/worker-stall-fencing.ts`) reproduces the exact case this finding describes against
+real processes: `SIGSTOP` a worker mid-request past its lease's expiry, let a second worker
+reclaim and complete, `SIGCONT` the first — the receiver genuinely responds to the frozen
+worker's socket while it's stopped (proving the send really did reach the receiver, not a
+simulated approximation), and the resumed worker's write-back is confirmed dropped: the
+endpoint's `lease_id` is unchanged from the reclaiming worker's, exactly one attempt ever
+recorded a response, and the delivery stays in exactly one terminal state.
 
 ### F-3 — Secret rotation as designed halts endpoints
 
@@ -155,10 +172,10 @@ part of this is already code-verified: `node/src/routes/endpoints.ts`'s
 `POST /endpoints/:id/secret/rotate` (already-shipped, ticket #16) now correctly moves the
 current secret to `secondary_secret` with an expiry instead of overwriting it — `npm run
 typecheck` passes clean, not yet re-run live against Postgres.
-**Status:** Partially fixed. The rotation-endpoint half is code-complete; the multi-sign-at-
-delivery-time half (the actual point of this fix) lives in the delivery worker, which is
-ticket #18 and not yet built — so the closing `make test` scenario still can't run. Re-status
-to `Fixed` once #18 closes with that test green.
+**Status:** Fixed. `make test`'s `rotation.overlap.test.ts` closes exactly the scenario this
+finding specified: rotate a secret via the real API, delivery signs with both the old and new
+secret throughout the overlap window (a receiver checking only the old secret still verifies),
+the endpoint never halts; once the overlap window elapses, old-secret-only verification fails.
 
 ### F-4 — DECISIONS.md asserts evidence that doesn't exist yet
 
@@ -226,9 +243,11 @@ the fairness rule routes the next claim to the longest-unserved tenant as soon a
 frees. Recorded as `docs/adr/0004-tenant-fairness-bound.md`; `DECISIONS.md` ("Tenant fairness")
 and `ARCHITECTURE.md` (core-mechanisms bullet) updated with the bound and the test obligation
 it creates for the eventual test-suite ticket.
-**Status:** Design fixed — same pattern as F-1/F-2: the bound and the required scenario are now
-specified precisely enough to implement against, but the actual `make load` tarpit scenario
-can't exist until the delivery worker (ticket #18) and test-suite tickets (#21/#27) are built.
+**Status:** Fixed. `make load`'s `tarpit-fairness` scenario (`node/load/tarpit-fairness.ts`)
+saturates a real 3-worker pool with tarpit endpoints (each request never responds), then
+measures a quiet tenant's added latency once it publishes into the fully-saturated pool.
+Measured across multiple runs: ~1020–1150ms against a 1000ms outbound timeout — landing almost
+exactly on "roughly one outbound-timeout cycle," the bound this finding's resolution stated.
 
 ### F-6 — The ~61s figure doesn't follow from the stated parameters
 
@@ -261,11 +280,10 @@ duration) is more accurate than either the original number or this finding's own
 prose updated to the corrected figure and recomputed ratios (**158x** vs Shopify, **~2,850x**
 vs Stripe) — smaller than this finding's predicted 465x/8,400x since those assumed the 31s-only
 figure, but the conclusion still holds in the same direction.
-**Status:** Fixed — doc-only, no code/test dependency. The `make test` assertion that
-reconstructs the schedule from real `attempts` timestamps still needs the delivery worker
-(ticket #18) to exist; that part of the closing criteria stays open until then, tracked under
-F-9 rather than duplicated here.
-**Status:** Open
+**Status:** Fixed. `make test`'s `backoff.schedule.test.ts` reconstructs the schedule from real
+`attempts` timestamps, confirms each retry's scheduled delay stays within the stated formula's
+ceiling, and confirms the endpoint halts exactly on the `maxAttempts`-th failure — not a later
+claim, and not claimable again immediately after.
 
 ### F-7 — Stretch-goal contradictions presented as compliance
 
@@ -332,9 +350,11 @@ replay window — the recommended option. Recorded as
 `docs/adr/0005-async-replay-expansion.md`; schema, `DECISIONS.md` ("Publishing, expansion, and
 replay"), and `ARCHITECTURE.md` (replay sequence diagram, now mirroring the expansion loop
 shape; ER diagram) all updated to match.
-**Status:** Design fixed — same pattern as F-1/F-2/F-5: the closing `make properties`/`make
-load` scenarios need the delivery worker and replay-expansion logic (ticket #18/#19), not yet
-built.
+**Status:** Fixed. `make properties`'s `replayCrashSafety.property.test.ts` retries the replay
+POST a randomized number of times before expansion ever runs (the exact "crash between ack and
+expansion" gap this finding names) and confirms exactly one replayed delivery results.
+`make load`'s `replay-latency-flat` confirms replay-API latency stays flat from a 100- to a
+10,000-delivery window — both closing scenarios this finding specified.
 
 ### F-9 — Acceptance coverage fails the PRD's own standard
 
@@ -363,10 +383,15 @@ suggestion. R-4, R-9, R-10, R-20, R-23–25 explicitly left as a *named gap*, no
 they need the visibility API (#20) and the R-20 dedupe-rule fix (F-13, not yet resolved) to
 exist first; specifying a test against a surface that isn't designed yet would be guessing, not
 fixing.
-**Status:** Partially fixed. Doc-only for the rows that got commands (no code dependency beyond
-what F-1/F-2/F-3/F-5/F-6/F-8 already require); the five still-uncovered requirements are an
-honestly-tracked remainder, not resolved by this pass.
-**Status:** Open
+**Status:** Fixed. The five requirements this finding named as an honestly-tracked gap (R-4,
+R-9, R-10, R-20, R-23–25) all now have real closing tests: R-4 (`delivery.claimDelivery.test.ts`
+— a paused endpoint accumulates but is never claimed), R-9 (`events.test.ts` — status is
+`pending_expansion`, not silently absent, immediately after publish, before expansion runs),
+R-10 (`expansion.test.ts` — one delivery per subscribed endpoint, none missed), R-20
+(`conformingReceiver.test.ts` — a replay of a previously-*failed* event is genuinely
+reprocessed by a receiver that correctly dedupes on success, not silently skipped), R-23–25
+(`deliveries.test.ts`/`events.search.test.ts`/`endpoints.deliveries.test.ts`, built closing the
+visibility API ticket, #20). No remaining gap.
 
 ### F-10 — SSRF defense loses to redirects and DNS rebinding
 
@@ -397,9 +422,14 @@ three fixture scenarios this finding specified. One piece is already code-verifi
 so the future delivery worker shares the exact same list rather than risking a second,
 independently-drifting one — `npm run typecheck` passes clean. The registration-time validator
 itself needed no fix; it already resolved and checked every A/AAAA record correctly.
-**Status:** Design fixed — the resolve-validate-pin custom dial and the no-redirects HTTP
-client config are both delivery-worker code (ticket #18), not yet built, so the closing
-`make test` fixtures can't run yet.
+**Status:** Fixed. All three named fixtures pass under `make test`
+(`httpClient.resolveAndPin.test.ts`, `httpClient.sendOutboundRequest.test.ts`): a stub resolver
+that rebinds mid-flow is rejected (resolved once, address pinned, second call never happens); a
+302 to a metadata address is confirmed *not* followed (returned as the terminal response); the
+`::ffff:127.0.0.1` literal is rejected. A fourth scenario this finding's own closing line didn't
+name but PRD §8's row does — a slow-loris receiver (responds, then trickles the body forever) —
+also times out correctly, confirming the total-timeout bound covers the whole response
+lifecycle, not just headers.
 
 ---
 
@@ -550,22 +580,30 @@ exactly as this finding suggested.
 
 ---
 
-## Burn-down complete: all 17 findings closed
+## Burn-down complete: all 17 findings Fixed
 
-Every finding (F-1 through F-17) has a resolution as of 2026-08-06. Status breakdown:
+Every finding (F-1 through F-17) is **Fixed** as of the Node "Test suite & deployment" ticket
+(#21) closing — the five that stayed at "Design fixed"/"Partially fixed" through the
+implementation tickets (#16-#20) — F-1, F-2, F-3, F-5, F-8, F-9, F-10 — all had their named
+closing command (`make test`/`make properties`/`make chaos`/`make load`) written and passing in
+that ticket. Nothing remains open.
 
-- **Fixed** (fully closed, no code/test dependency remaining): F-4, F-6, F-7, F-9 (partial —
-  5 requirements honestly left uncovered pending unbuilt surfaces), F-11, F-12 (live-verified),
-  F-13, F-14, F-15, F-16 (live-verified), F-17. 10 of 17.
-- **Design fixed** (schema/docs/ADR committed, closing test needs the delivery worker — ticket
-  #18 — which doesn't exist yet): F-1, F-2, F-5, F-8, F-10. 5 of 17.
-- **Partially fixed**: F-3 (rotation-endpoint half is code-verified; the multi-sign-at-delivery
-  half needs #18), F-9 (see above). 2 of 17 (already counted above where they overlap).
+Six new ADRs were created during the original review (`docs/adr/0001`–`0006`), plus one more
+(`docs/adr/0007`) found while building #21's closing tests — none of these findings were "just
+documentation," most changed the actual design. Several findings were verified live against a
+real Postgres instance and/or real spawned processes, not just typechecked: F-1/F-2 (real
+`SIGSTOP`/`SIGCONT` and process-kill chaos scenarios, not simulated), F-5 (real 3-worker pool
+saturation, measured added latency), F-8 (real crash-window retries), F-10 (real stub-resolver
+rebind, real 302 response, real slow-loris trickle), F-12, F-16 (already live-verified when
+first closed). `DECISIONS.md` grew from ~1050 words to well over 2 pages fixing all of this — a
+compression pass is the explicit next step (see C-4).
 
-Six new ADRs were created (`docs/adr/0001`–`0006`) — none of these findings were "just
-documentation," most changed the actual design. Two findings (F-12, F-16) were verified live
-against a real Postgres instance, not just typechecked. `DECISIONS.md` grew from ~1050 words to
-well over 2 pages fixing all of this — a compression pass is the explicit next step (see C-4).
+Building #21's closing tests also surfaced one further, previously-undetected bug beyond the
+original 17 findings: the delivery claim query picked the oldest *eligible* pending delivery
+rather than the true per-endpoint head, letting a later delivery jump the queue while the head
+was mid-backoff — a genuine R-11 violation, found by `make chaos`'s partition-head scenario, not
+by inspection. Fixed in `node/src/worker/delivery.ts`, regression-covered in
+`delivery.claimDelivery.test.ts`.
 
 ---
 

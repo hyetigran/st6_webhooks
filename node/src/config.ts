@@ -43,11 +43,16 @@ export const outboundHttp = {
 };
 
 // Lease duration for crash recovery (ADR-003): derived from the outbound HTTP
-// timeout, not an independent constant, so the two can't drift apart.
+// timeout, not an independent constant, so the two can't drift apart. The
+// 30s floor is itself env-configurable (not just outboundHttp.totalTimeoutMs)
+// so chaos tests can shrink lease expiry to a few seconds instead of always
+// waiting out the production-safe default — PRD §8's make verify "time is
+// injected" applies here too, not just to backoff/outbound timeouts.
 export const lease = {
   get durationMs(): number {
     const timeout = outboundHttp.totalTimeoutMs;
-    return timeout + Math.max(timeout, 30_000);
+    const floor = envInt("LEASE_MIN_DURATION_MS", 30_000);
+    return timeout + Math.max(timeout, floor);
   },
 };
 

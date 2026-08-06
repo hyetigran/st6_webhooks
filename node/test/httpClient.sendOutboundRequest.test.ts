@@ -85,6 +85,23 @@ describe("sendOutboundRequest", () => {
     expect(result.errorClass).toBe("total_timeout");
   });
 
+  it("times out a slow-loris receiver that starts responding but trickles the body without ever finishing (R-16)", async () => {
+    const port = await listen((req, res) => {
+      res.writeHead(200);
+      res.write("a"); // headers + first byte arrive immediately...
+      const trickle = setInterval(() => res.write("b"), 20); // ...then it just dribbles, never calling end()
+      res.on("close", () => clearInterval(trickle));
+    });
+
+    const result = await sendOutboundRequest("127.0.0.1", new URL(`http://original-hostname.test:${port}/webhook`), {
+      ...baseOptions,
+      totalTimeoutMs: 100,
+    });
+
+    expect(result.responseStatus).toBeNull();
+    expect(result.errorClass).toBe("total_timeout");
+  });
+
   it("reports a connection_refused error class when nothing is listening", async () => {
     const result = await sendOutboundRequest("127.0.0.1", new URL("http://original-hostname.test:1/webhook"), baseOptions);
 

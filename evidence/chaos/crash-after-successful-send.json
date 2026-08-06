@@ -1,0 +1,11 @@
+{
+  "scenario": "crash-after-successful-send",
+  "timestamp": "2026-08-06T23:16:19.268Z",
+  "status": "pass",
+  "durationMs": 2373,
+  "receivedEventIds": [
+    "59dddeb1-904e-434f-9def-d882f6e4daa0",
+    "59dddeb1-904e-434f-9def-d882f6e4daa0"
+  ],
+  "finalState": "succeeded"
+}

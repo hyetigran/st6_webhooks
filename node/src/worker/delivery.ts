@@ -116,21 +116,31 @@ async function tryClaimEndpoint(pool: pg.Pool, candidate: CandidateRow, cutoff: 
     secondary_secret_expires_at: Date | null;
   }
 
-  const { rows: deliveryRows } = await pool.query<DeliveryRow>(
-    `SELECT d.id, d.event_id, d.attempt_count, e.type AS event_type, e.payload,
+  // R-11: strict per-endpoint order means the *true* head — lowest seq,
+  // period — is always what's next, never a later delivery that merely
+  // happens to be immediately eligible. Filtering on next_attempt_at here
+  // (as an earlier version of this query did) would let a later delivery
+  // jump ahead of a head that's still cooling down from a prior failure's
+  // backoff — found via chaos testing (make chaos's partition-head
+  // scenario), not by inspection. So: fetch the head unconditionally, then
+  // decide eligibility in application code below.
+  const { rows: deliveryRows } = await pool.query<DeliveryRow & { next_attempt_at: Date }>(
+    `SELECT d.id, d.event_id, d.attempt_count, d.next_attempt_at, e.type AS event_type, e.payload,
             ep.url, ep.signing_secret, ep.secondary_secret, ep.secondary_secret_expires_at
      FROM deliveries d
      JOIN events e ON e.id = d.event_id
      JOIN endpoints ep ON ep.id = d.endpoint_id
-     WHERE d.endpoint_id = $1 AND d.state = 'pending' AND d.next_attempt_at <= now()
+     WHERE d.endpoint_id = $1 AND d.state = 'pending'
      ORDER BY d.seq
      LIMIT 1`,
     [candidate.id],
   );
   const delivery = deliveryRows[0];
-  if (!delivery) {
-    // Candidate filter guarantees this shouldn't happen, but release the
-    // claim defensively rather than leave the endpoint stuck busy.
+  if (!delivery || delivery.next_attempt_at > new Date()) {
+    // Either nothing pending at all (candidate filter guarantees this
+    // shouldn't happen, but release defensively rather than leave the
+    // endpoint stuck busy), or the true head just isn't ready yet — either
+    // way, nothing on this endpoint may be claimed right now.
     await pool.query(`UPDATE endpoints SET busy = false, busy_since = NULL, lease_id = NULL WHERE id = $1 AND lease_id = $2`, [
       candidate.id,
       leaseId,
