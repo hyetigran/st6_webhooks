@@ -40,6 +40,13 @@ not a replacement for it.
   Postgres's transaction-stable `now()` — see the gotchas section below. Live-verified end to
   end: replayed a real previously-delivered event against httpbin.org through the actual
   running worker.
+- **Node — visibility & read API** (`#20`): `GET /events` (search by type/endpoint_id/from/to/
+  id, R-24), `GET /events/:id` (fan-out summary), `GET /deliveries/:id` (state/attempt_count/
+  next_attempt_at/`blocked_on_delivery_id` per R-23, `last_response`, attempts capped at 6),
+  `GET /endpoints/:id/deliveries` (queue view, ascending by `seq`, its own `after`-cursor).
+  `blocked_on_delivery_id` computed read-time from each endpoint's head, shared via
+  `node/src/lib/deliveryQueries.ts`. R-25's health fields were already done in `#16`.
+  Live-verified against real historical delivery data through the running API.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -50,17 +57,18 @@ not a replacement for it.
 
 ## What's built but not yet exercised end-to-end
 
-Nothing currently — everything built so far, including `#18`'s delivery worker, has been
-verified live against a real running process and (for `#18`) real external infrastructure.
+Nothing currently — everything built so far, including `#18`'s delivery worker and `#20`'s read
+routes, has been verified live against a real running process and (for `#18`/`#19`/`#20`) real
+external infrastructure or real historical data.
 
 ## What doesn't exist yet
 
-- **Node**: visibility/read API (`#20` — also the natural place to add `replays.status` to the
-  REST contract for polling replay progress), test suite + deployment docs (`#21` — owes the
-  closing tests for 5 "Design fixed" review findings: F-1, F-2, F-5, F-8, F-10, now
-  implementable since `#18` exists; also owes `docs/adr/0004`'s tarpit-tenant fairness
-  `make load` scenario, and real multi-worker same-endpoint concurrency races, all explicitly
-  deferred from `#17`/`#18`/`#19`).
+- **Node**: test suite + deployment docs (`#21`, the last Node ticket — owes the closing tests
+  for 5 "Design fixed" review findings: F-1, F-2, F-5, F-8, F-10, now implementable since `#18`
+  exists; also owes `docs/adr/0004`'s tarpit-tenant fairness `make load` scenario, and real
+  multi-worker same-endpoint concurrency races, all explicitly deferred from `#17`/`#18`/`#19`).
+  Also: `replays.status` was never added to the REST contract for polling replay progress
+  (`docs/adr/0005`'s "Consequences" note flagged this as not-yet-done) — still open.
 - **Go**: the entire stack (`#22-27`), mirroring Node ticket-for-ticket — including every
   review-driven fix, not the pre-review design. The Go schema must match Node's *current*
   schema exactly, which as of `#19` is `001_init.sql` **plus** `002_deliveries_seq.sql`
@@ -114,3 +122,8 @@ verified live against a real running process and (for `#18`) real external infra
 - **`npm audit` flags 5 vulnerabilities** in `node/`, all transitive dev-dependencies of
   `vitest`'s bundled `esbuild` dev server (not production code, not shipped). Not worth fixing
   unless it starts blocking something.
+- **`GET /endpoints/:id/deliveries` deliberately breaks the API's own pagination convention**:
+  every other list route uses `?before=<created_at+id cursor>`, newest-first. This one route
+  (`#20`) uses `?after=<seq cursor>`, ascending (head-first) — a queue view's natural read order
+  is the opposite of a list view's. The Go implementation must match this exact deviation, not
+  "fix" it toward consistency, or the shared frontend (ADR-008) breaks against one backend.
