@@ -31,6 +31,15 @@ not a replacement for it.
   confirmed via the receiver's own echo response.
   - This closes the five "Design fixed" `REVIEW.md` findings (F-1, F-2, F-5, F-8, F-10) that
     were waiting on this worker to exist as real, tested code.
+- **Node — replay** (`#19`): `POST /endpoints/:id/replays` mirrors publish's async two-phase
+  shape (`docs/adr/0005`) — 202 immediately, a worker cycle later expands. The replay-expansion
+  cycle excludes still-pending/in_flight originals, creates fresh delivery rows reusing the
+  original `event_id`, and reuses the delivery worker's existing claim mechanism with no new
+  locking. **Found and fixed a real ordering bug while implementing**: added `deliveries.seq
+  BIGSERIAL` (`docs/adr/0007`) since replay's bulk same-endpoint insert would otherwise tie on
+  Postgres's transaction-stable `now()` — see the gotchas section below. Live-verified end to
+  end: replayed a real previously-delivered event against httpbin.org through the actual
+  running worker.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -46,14 +55,16 @@ verified live against a real running process and (for `#18`) real external infra
 
 ## What doesn't exist yet
 
-- **Node**: replay (`#19` — must implement async replay expansion per `docs/adr/0005`),
-  visibility/read API (`#20`), test suite + deployment docs (`#21` — owes the closing tests for
-  5 "Design fixed" review findings: F-1, F-2, F-5, F-8, F-10, now implementable since `#18`
-  exists; also owes `docs/adr/0004`'s tarpit-tenant fairness `make load` scenario, and real
-  multi-worker same-endpoint concurrency races, both explicitly deferred from `#17`/`#18`).
+- **Node**: visibility/read API (`#20` — also the natural place to add `replays.status` to the
+  REST contract for polling replay progress), test suite + deployment docs (`#21` — owes the
+  closing tests for 5 "Design fixed" review findings: F-1, F-2, F-5, F-8, F-10, now
+  implementable since `#18` exists; also owes `docs/adr/0004`'s tarpit-tenant fairness
+  `make load` scenario, and real multi-worker same-endpoint concurrency races, all explicitly
+  deferred from `#17`/`#18`/`#19`).
 - **Go**: the entire stack (`#22-27`), mirroring Node ticket-for-ticket — including every
   review-driven fix, not the pre-review design. The Go schema must match Node's *current*
-  `001_init.sql`, not an earlier version.
+  schema exactly, which as of `#19` is `001_init.sql` **plus** `002_deliveries_seq.sql`
+  (`deliveries.seq`) — not `001_init.sql` alone.
 - **Frontend**: entire SPA (`#28-30`) — buildable now against the fixed REST contract.
 - **`README.md`**: the *final submission* version is still not started for either stack (part of
   `#21`/`#27`). The current root `README.md` is an interim orientation doc, explicitly marked as
@@ -79,6 +90,15 @@ verified live against a real running process and (for `#18`) real external infra
   semicolons** — discovered the hard way validating `ARCHITECTURE.md`'s diagrams against the
   real parser. Use literal `<text>` or parentheses, and avoid semicolons inside a message; a
   trailing semicolon at end-of-line is fine.
+- **Postgres's `now()` is transaction-stable, not statement-stable** — every statement inside
+  one transaction sees the identical value (unlike `clock_timestamp()`, which advances per
+  call). A multi-row same-endpoint `INSERT ... SELECT` relying on a `created_at DEFAULT now()`
+  column to preserve relative insertion order will silently break: every new row gets the exact
+  same timestamp, and ties are broken arbitrarily wherever they're later sorted on. `#19`'s replay-expansion cycle hit exactly this; fixed with a dedicated `seq BIGSERIAL` column
+  (`deliveries.seq`, `docs/adr/0007`), mirroring `events.seq`'s existing fix for the same class
+  of problem. **The Go implementation needs the identical fix** — this isn't Node-specific, it's
+  a Postgres semantic, and Go's driver will hit the exact same bug if a bulk same-endpoint
+  insert relies on `created_at` for order.
 - **Never compare a Node-side `new Date()` timestamp against Postgres's own `now()` in a query**
   — real clock skew between the Node process and the Docker Postgres container caused
   intermittent test failures in `#18` (`test/fixtures.ts`'s `createPendingDelivery`). Let
