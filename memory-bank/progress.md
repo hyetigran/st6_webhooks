@@ -47,6 +47,19 @@ not a replacement for it.
   `blocked_on_delivery_id` computed read-time from each endpoint's head, shared via
   `node/src/lib/deliveryQueries.ts`. R-25's health fields were already done in `#16`.
   Live-verified against real historical delivery data through the running API.
+- **Node — test suite & deployment** (`#21`, the last Node ticket): PRD §8's complete acceptance
+  suite — `make test` (rotation overlap, backoff-schedule reconstruction, paused-endpoint
+  exclusion, SSRF/slow-loris fixtures, conforming-receiver fixture), `make properties` (3
+  seeded, randomized invariants — `test/properties/prng.ts`, reproducible via
+  `PROPERTY_TEST_SEED`), `make chaos` (5 scenarios against **real spawned processes** with real
+  `SIGKILL`/`SIGSTOP`/`SIGCONT` — `node/chaos/`), `make load` (4 scenarios against a **real
+  spawned api/worker pool** — `node/load/`), `make verify` orchestrating all of it with evidence
+  in `evidence/{chaos,load}/*.json`. `node/Makefile`, real `node/README.md` (every command
+  verified against real output, including the full Docker Compose stack). All 17 original
+  `REVIEW.md` findings are now genuinely `Fixed` — see `activeContext.md` for the full list of
+  what each closing scenario proves. **Found and fixed a real R-11 violation** in the delivery
+  claim query via chaos testing (see gotchas below) — this is exactly the kind of bug this
+  ticket's whole purpose was to catch.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -57,30 +70,29 @@ not a replacement for it.
 
 ## What's built but not yet exercised end-to-end
 
-Nothing currently — everything built so far, including `#18`'s delivery worker and `#20`'s read
-routes, has been verified live against a real running process and (for `#18`/`#19`/`#20`) real
-external infrastructure or real historical data.
+Nothing — the entire Node stack has been verified live against real running processes, real
+external infrastructure (httpbin.org), real historical data, and (for `#21`) a real Docker
+Compose deployment. Node is done.
 
 ## What doesn't exist yet
 
-- **Node**: test suite + deployment docs (`#21`, the last Node ticket — owes the closing tests
-  for 5 "Design fixed" review findings: F-1, F-2, F-5, F-8, F-10, now implementable since `#18`
-  exists; also owes `docs/adr/0004`'s tarpit-tenant fairness `make load` scenario, and real
-  multi-worker same-endpoint concurrency races, all explicitly deferred from `#17`/`#18`/`#19`).
-  Also: `replays.status` was never added to the REST contract for polling replay progress
-  (`docs/adr/0005`'s "Consequences" note flagged this as not-yet-done) — still open.
 - **Go**: the entire stack (`#22-27`), mirroring Node ticket-for-ticket — including every
   review-driven fix, not the pre-review design. The Go schema must match Node's *current*
-  schema exactly, which as of `#19` is `001_init.sql` **plus** `002_deliveries_seq.sql`
-  (`deliveries.seq`) — not `001_init.sql` alone.
-- **Frontend**: entire SPA (`#28-30`) — buildable now against the fixed REST contract.
-- **`README.md`**: the *final submission* version is still not started for either stack (part of
-  `#21`/`#27`). The current root `README.md` is an interim orientation doc, explicitly marked as
-  such, and now also carries the `reqs not read` omission note (removed a second time by the
-  user directly, confirmed intentional — see `activeContext.md`) and the AI-usage/transcripts
-  disclosure.
-- **Primary-build designation**: can't be decided until both stacks have a working `make load`
-  test to measure (see `DECISIONS.md`, "Submission").
+  schema exactly: `001_init.sql` **plus** `002_deliveries_seq.sql` (`deliveries.seq`). Go's own
+  "Test suite & deployment" ticket (`#27`) must build the identical PRD §8 suite — see
+  `activeContext.md`'s "What just happened" for the full shape `#21` established (`make test`/
+  `properties`/`chaos`/`load`/`verify`, real spawned processes/signals for chaos, real spawned
+  api/worker for load).
+- **Frontend**: entire SPA (`#28-30`) — buildable now against the fixed REST contract, every
+  route across `#16`-`#21` live-verified.
+- **`README.md`**: the *final submission* root version is still not started — needs primary-
+  build designation (`#14`), which needs Go to exist. `node/README.md` (owned by `#21`) is done
+  and is the real clone-to-run guide for the Node stack specifically; the root `README.md`
+  stays interim until the primary build is chosen and its README supersedes the root file.
+- **Primary-build designation**: can't be decided until Go also has a `make load` result to
+  compare against Node's (captured in `evidence/load/`).
+- **`replays.status` polling exposure**: `docs/adr/0005`'s "Consequences" note flagged this as
+  not-yet-added to the REST contract — still genuinely open, not picked up by `#20` or `#21`.
 - **C-2 (time spent) in `REVIEW.md`'s checklist**: still needs the user's answer.
 
 ## Known issues / gotchas for future sessions
@@ -127,3 +139,36 @@ external infrastructure or real historical data.
   (`#20`) uses `?after=<seq cursor>`, ascending (head-first) — a queue view's natural read order
   is the opposite of a list view's. The Go implementation must match this exact deviation, not
   "fix" it toward consistency, or the shared frontend (ADR-008) breaks against one backend.
+- **The delivery claim query can silently violate strict per-endpoint order (R-11) if it filters
+  on `next_attempt_at <= now()` when picking which delivery to claim** — found via chaos testing
+  in `#21`, not by inspection. If the true head (lowest `seq`) is mid-backoff (not yet eligible)
+  but a *later* delivery for the same endpoint already is, a naive `WHERE state='pending' AND
+  next_attempt_at <= now() ORDER BY seq LIMIT 1` query happily returns the later one, jumping the
+  queue. The fix: always fetch the true head unconditionally (`WHERE state='pending' ORDER BY
+  seq LIMIT 1`, no `next_attempt_at` filter), then check eligibility in application code —
+  release the claim without picking anything if the head isn't ready yet, rather than falling
+  through to a later row. **The Go implementation must not repeat this bug.**
+- **`tsx`'s own CLI binary (`node_modules/.bin/tsx`) re-execs into a *second*, inner node
+  process** carrying `--require .../preflight.cjs --import .../loader.mjs`, to satisfy Node's
+  loader-hook API (which only applies `--import` at process start). If you `child_process.spawn()`
+  the `tsx` binary directly expecting to control/signal the process actually running your code,
+  you only get a handle to the *outer* wrapper — and `SIGKILL` is uncatchable, so a killed
+  wrapper can't relay it to its child, leaving the real process orphaned and un-killable (chaos
+  scripts in `#21` hit this: two worker-entrypoint processes stayed alive simultaneously,
+  invisible to the harness). Fix: spawn `process.execPath` (`node`) directly with the same
+  `--require`/`--import` flags `tsx`'s wrapper uses (see `node/scripts/scenarioHarness.ts`'s
+  `tsxNodeArgs`), skipping the wrapper entirely.
+- **A local HTTP receiver a real spawned worker process needs to hit will always fail the real
+  SSRF check** (loopback/private addresses are correctly denylisted) — this isn't a bug, it's
+  the defense working. Chaos/load scripts that need a controllable local receiver (`#21`) use a
+  dedicated, never-shipped `chaos/worker-entrypoint.ts` that's structurally identical to the real
+  `src/worker.ts` poll loop except for an injected permissive `resolveAndPin`, via the same
+  `DeliveryCycleDeps` seam the vitest suite already uses — not a modification to production code.
+- **A receiver that responds "fast" or "slow but eventually" can complete an entire
+  claim→send→respond→write-back cycle within a single 50ms poll interval**, making it
+  impossible to reliably observe an intermediate state (e.g. `in_flight`) via polling before
+  killing/signaling a process. Fix used throughout `#21`'s chaos scenarios: make only the
+  *first* request to a scenario's receiver artificially slow (a few hundred ms), so there's a
+  reliable observation window, while every subsequent request responds normally — rather than
+  making every request slow (which can itself blow past a short timeout and produce a
+  different, unintended failure mode).

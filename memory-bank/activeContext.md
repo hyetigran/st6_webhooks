@@ -6,63 +6,88 @@ issue #1) and `git log`, then fix this file.
 
 ## Current phase
 
-Implementation phase, Node track. Five of six Node tickets are built and merged: schema/
-scaffolding (`#16`), publish/async expansion (`#17`), the delivery worker (`#18`), replay
-(`#19`), and the visibility/read API (`#20`). Node now has a working, live-verified publish →
-expand → deliver → replay → read pipeline end to end, including real HTTP delivery to a public
-receiver. Only `#21` (test suite & deployment) remains on the Node track. Go (`#22-27`) and the
-frontend (`#28-30`) haven't started.
+**The entire Node track is done.** All six Node tickets (`#16`-`#21`) are built, merged, and
+verified. Node has a complete, live-verified publish → expand → deliver → replay → read
+pipeline, a full PRD §8 acceptance suite (`make test`/`properties`/`chaos`/`load`/`verify`), a
+real clone-to-run `node/README.md`, and a validated Docker Compose deployment. All 17 original
+`REVIEW.md` findings are genuinely `Fixed`. Nothing left to do on Node unless the Go/primary-
+build comparison surfaces something. Go (`#22-27`) and the frontend (`#28-30`) haven't started —
+these are next.
 
 ## What just happened (most recent session)
 
-- **`#20` — [Node] Visibility & read API built and merged** (MR !5, branch
-  `20-node-visibility-read-api`, off an up-to-date `main` after `#19`'s MR !3 was merged on
-  request). TDD throughout, seams confirmed with the user first (this ticket had more open
-  response-shape judgment calls than usual, since `DECISIONS.md`'s route table pins paths/
-  purposes but not exact JSON shapes). Four routes: `GET /events` (search by type/endpoint_id/
-  from/to/id, R-24, `endpoint_id` filters via `EXISTS` through deliveries), `GET /events/:id`
-  (fan-out summary), `GET /deliveries/:id` (state/attempt_count/next_attempt_at/
-  `blocked_on_delivery_id` per R-23, `last_response`, attempts capped at 6 per the contract),
-  `GET /endpoints/:id/deliveries` (queue view — **ascending** by `seq`, head first, its own
-  `after`-param seq cursor rather than the other list routes' `before`/`created_at`+id
-  convention, since a queue view's natural order is the opposite of a list view's newest-first).
-  - **`blocked_on_delivery_id`** (R-12/R-23, `CONTEXT.md`'s "Blocked" definition: not the
-    endpoint's current head, head hasn't resolved) is computed read-time from each endpoint's
-    oldest unresolved (`pending`/`in_flight`) delivery by `seq` — shared between the two routes
-    that need it via new `node/src/lib/deliveryQueries.ts` (`HEAD_DELIVERY_SELECT` SQL fragment,
-    `computeBlockedOnDeliveryId`, `serializeDeliverySummary`).
-  - R-25's health fields (`queue_depth`/`oldest_pending_at`/`recent_success_rate` on
-    `GET /endpoints`) were already built in `#16` — confirmed correct, nothing to add.
-  - **Live-verified against real infrastructure**: queried all four new routes against real
-    historical data (a real `httpbin.org`-delivered event and its original + replayed
-    deliveries) through the actual running API — real captured response bodies, correct
-    filtering, correct 404s.
+- **`#21` — [Node] Test suite & deployment built and merged** (MR !6, branch
+  `21-node-test-suite-deployment`, off an up-to-date `main` after `#20`'s MR !5 was merged on
+  request). This was the largest ticket in the map — four distinct testing paradigms. Confirmed
+  tooling choices with the user first: hand-written seeded-PRNG invariants over `fast-check`
+  (only ~3 invariants, not worth a new dependency), hand-rolled Node/TS load scripts over
+  `autocannon` (the fairness scenarios need custom two-tenant-simultaneously shapes a generic
+  load tool isn't suited to).
+  - **`make test`**: F-3 secret rotation overlap (`rotation.overlap.test.ts` — signs with both
+    secrets throughout the window, never halts, fails after expiry), backoff-schedule
+    reconstruction from real `attempts` timestamps (`backoff.schedule.test.ts` — halts exactly
+    on the `maxAttempts`-th failure), paused-endpoint exclusion (R-4), a slow-loris receiver
+    (trickles the body forever — distinct from a merely-delayed response), and a
+    conforming-receiver fixture (`conformingReceiver.ts`/`.test.ts`, F-13/R-20 — proves a replay
+    of a previously-*failed* event is genuinely reprocessed, not silently no-op'd by a receiver
+    that dedupes correctly on success).
+  - **`make properties`** (`test/properties/`, seeded via `prng.ts`'s mulberry32 — every run
+    logs its seed, reproducible via `PROPERTY_TEST_SEED`): seq order under racing concurrent
+    expansion workers, repeated publish-key idempotency, replay crash-safety (retries before
+    expansion still land exactly once).
+  - **`make chaos`** (`node/chaos/`, real spawned processes, real `SIGKILL`/`SIGSTOP`/
+    `SIGCONT`): kill-mid-delivery, F-2's stall-fencing (the actual `SIGSTOP` → reclaim → `SIGCONT`
+    → dropped-write scenario, not simulated), partition-head-blocked-then-drains, crash-after-
+    successful-send, and `expansion-crash-order` (a real process `SIGKILL`ed while holding a
+    tenant's expansion advisory lock — proves `docs/adr/0001`'s "no lease needed" claim under an
+    actual crash).
+  - **`make load`** (`node/load/`, real spawned api/worker pool): publish/replay latency flat
+    (10→10,000 subscribers, 100→10,000-delivery windows), noisy-neighbor volume fairness, F-5's
+    tarpit-tenant bound — **measured ~1020-1150ms against a 1000ms outbound timeout**, landing
+    almost exactly on `docs/adr/0004`'s "roughly one outbound-timeout cycle."
+  - **A real, previously-undetected bug found via chaos testing, not inspection**: the delivery
+    claim query picked the oldest *eligible* pending delivery rather than the true head, so a
+    later delivery could jump the queue while the head was mid-backoff — a genuine R-11
+    violation. Fixed in `node/src/worker/delivery.ts` (head fetched unconditionally, eligibility
+    checked in application code), regression-covered in `delivery.claimDelivery.test.ts`.
+  - **A real, non-obvious infrastructure bug**: `tsx`'s own CLI re-execs into a *second* inner
+    node process to satisfy Node's loader-hook API — `spawn()` only gets a handle to the outer
+    wrapper, and `SIGKILL` is uncatchable, so a killed wrapper can't relay it to its child,
+    leaving the real worker process orphaned and un-killable. Fixed by invoking `node` directly
+    with `tsx`'s loader flags, bypassing the wrapper — see `progress.md`'s gotchas.
+  - Chaos/load scenarios can't deliver to local receivers through the *real* `src/worker.ts`
+    (its SSRF check correctly rejects loopback) — solved with a dedicated,
+    never-shipped `chaos/worker-entrypoint.ts` mirroring the real poll loop exactly except for
+    an injected permissive resolver, via the same `DeliveryCycleDeps` seam the vitest suite uses.
+  - **Full Docker Compose stack built and validated end-to-end** — real delivery to a real
+    external receiver through the actual containers, not just local `tsx` dev mode.
+  - `node/README.md` rewritten from an interim stub into the real clone-to-run guide — every
+    command and curl example in it was actually run and checked against real output, including
+    the HMAC verification snippet (computed and matched byte-for-byte against a live signature).
   - `/code-review` (Standards + Spec axes) found and fixed two real issues: (1) standards —
-    `deliveries.ts` and `endpoints.ts` were duplicating the same delivery-summary
-    serialization inline instead of sharing it, extracted `serializeDeliverySummary` into
-    `deliveryQueries.ts`; (2) spec — the attempts array on `GET /deliveries/:id` had no
-    explicit `LIMIT`, silently relying on `config.backoff.maxAttempts`'s default (also 6) rather
-    than enforcing the contract's independent "capped at 6" requirement — fixed with an explicit
-    `LIMIT 6` (newest-first, reversed for a chronological response) and a regression test
-    proving the cap keeps the *most recent* 6 attempts, not the first 6.
-- **`#19` — [Node] Replay, previously built, merged into `main` on request** (MR !3).
+    `chaos/harness.ts` and `load/harness.ts` had near-identical database-bootstrap/polling/
+    evidence-writing code with no shared module, extracted into `node/scripts/scenarioHarness.ts`;
+    (2) spec — PRD §8's concurrent-expansion-ordering row names *both* `make chaos` and
+    `make properties`, but only the properties half existed — added `expansion-crash-order.ts`.
+  - Added `LEASE_MIN_DURATION_MS` (`node/src/config.ts`) — the lease-duration floor was
+    hardcoded at 30s with no env override, unlike every other timing knob, which would have
+    made every lease-expiry chaos scenario take 30s+ regardless of other config.
 
 ## Next steps
 
-- `#21` — [Node] Test suite & deployment — the last Node ticket. Owns `make chaos`/
-  `make properties`/`make load`, the actual closing tests for review findings F-1/F-2/F-5/F-8/
-  F-10, `docs/adr/0004`'s stated tarpit-tenant fairness bound, and real multi-worker
-  same-endpoint concurrency races (all explicitly deferred from `#17`/`#18`/`#19`). Also owes
-  `#20`'s `replays.status` polling exposure per `docs/adr/0005`'s "Consequences" note, if that
-  hasn't been picked up elsewhere by then.
 - `#22` — [Go] Schema, scaffolding & endpoint management API (mirrors `#16`, unblocked, fully
   independent of the Node track). **The Go schema must include `deliveries.seq` from the start**
   (not just mirror `001_init.sql` — also apply `002_deliveries_seq.sql`'s change), since both
   stacks must implement `docs/adr/0007` identically. Also: `GET /endpoints/:id/deliveries`'s
   `after`/seq-cursor convention (deliberately different from every other list route) must match
-  exactly for the shared frontend (ADR-008) to work against either backend.
+  exactly for the shared frontend (ADR-008) to work against either backend. And: the delivery
+  claim query bug found in `#21` (jumping the queue past a backing-off head) is a design-level
+  gotcha the Go implementation must not repeat — see `progress.md`'s gotchas.
 - `#28` — Frontend: API client & endpoint management UI (buildable now against the fixed REST
-  contract — all four `#20` read routes plus everything from `#16`-`#19` are available).
+  contract — every route across `#16`-`#21` is available and live-verified).
+- **Primary-build designation** (ticket `#14`'s decision) can now actually be measured once Go
+  exists — Node's `make load` results are captured in `evidence/load/` as a baseline to compare
+  against.
 
 ## Open questions / risks being watched
 
