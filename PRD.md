@@ -103,8 +103,12 @@ Published in `README.md` and enforced by the fixtures in the test suite.
   a `delivery_id` unique per attempt sequence, and an attempt number.
 - Requests are signed with an HMAC over timestamp and body; receivers must verify and reject
   stale timestamps.
-- Receivers must be idempotent on `event_id`. We cannot make them so, so we document it and
-  give them the identifier to do it with.
+- Receivers must be idempotent on `event_id` — specifically, on *successfully processed*
+  `event_id`s. An `event_id` recorded as seen at attempt time (before processing succeeds)
+  would make a receiver silently no-op the replay of an event that never actually completed —
+  defeating the reason to replay it in the first place. We cannot make receivers do this
+  correctly, so we document the distinction and give them the identifier to do it with
+  (`REVIEW.md` F-13).
 - A `2xx` is success. Everything else retries. Receivers should respond before doing work.
 
 ## 7. UI surfaces
@@ -123,15 +127,36 @@ happened to this event" there without asking an engineer, the product has failed
 
 Requirements are accepted when the named command passes, not when the code exists.
 
-| Requirement | Demonstrated by                                                                            | Command           |
-| ----------- | ------------------------------------------------------------------------------------------ | ----------------- |
-| R-7, R-17   | Kill a worker mid-delivery; lease expires, work resumes, no event lost                     | `make chaos`      |
-| R-11, R-12  | Fail a partition head; followers report `Blocked`, then drain in order on recovery         | `make chaos`      |
-| R-6, R-21   | Repeated publish and replay keys create no additional deliveries                           | `make properties` |
-| R-8         | Publish latency flat from 10 to 10,000 subscribers; expansion completes                    | `make load`       |
-| R-18        | One tenant floods; a quiet tenant's p99 stays within its bound                             | `make load`       |
-| R-15        | Crash after a successful send; event ID identical across both attempts, one terminal state | `make chaos`      |
-| R-2, R-16   | Registration and delivery both reject private ranges; slow-loris receiver times out        | `make test`       |
+| Requirement       | Demonstrated by                                                                                     | Command           |
+| ------------------ | ------------------------------------------------------------------------------------------------------ | ----------------- |
+| R-7, R-17          | Kill a worker mid-delivery; lease expires, work resumes, no event lost                                 | `make chaos`      |
+| R-11, R-12         | Fail a partition head; followers report `Blocked`, then drain in order on recovery                     | `make chaos`      |
+| R-8, R-11          | Publish E1 then E2 to the same endpoint under concurrent expansion; D(E2) is never delivered before D(E1); per-endpoint delivery order equals `events.seq` order | `make chaos`, `make properties` |
+| R-11, R-15, R-17   | `SIGSTOP` a worker mid-request past lease expiry, let another reclaim and complete, `SIGCONT` the first; its write is dropped, exactly one terminal state, no interval with two in-flight attempts | `make chaos`      |
+| R-3                | Rotate a secret; receiver verifies against the old secret only throughout the overlap window and deliveries never halt; after expiry, old-secret-only verification fails | `make test`       |
+| R-6, R-21          | Repeated publish and replay keys create no additional deliveries                                       | `make properties` |
+| R-19, R-21, R-22   | Crash-inject between a replay's durable ack and its expansion; retry the same key; deliveries created exactly once, in original order                | `make properties` |
+| R-8                | Publish latency flat from 10 to 10,000 subscribers; expansion completes                                | `make load`       |
+| R-8, R-19, R-22    | Large-window replay leaves replay-API latency flat (async expansion, not synchronous)                   | `make load`       |
+| R-18               | One tenant floods; a quiet tenant's p99 stays within its bound                                          | `make load`       |
+| R-18               | One tenant saturates the worker pool with slow (tarpit) receivers; a quiet tenant's added latency stays within roughly one outbound-timeout cycle | `make load`       |
+| R-13, R-14         | Reconstruct the backoff schedule from `attempts` timestamps; matches the stated formula; endpoint halts on the final failure, not a later claim | `make test`       |
+| R-15               | Crash after a successful send; event ID identical across both attempts, one terminal state             | `make chaos`      |
+| R-2, R-16          | Registration and delivery both reject private ranges; a stub resolver that rebinds mid-flow is rejected at delivery time (resolve-validate-pin, not validate-then-connect); a receiver that 302s to a metadata address is not followed; `::ffff:127.0.0.1` literal rejected; slow-loris receiver times out | `make test`       |
+
+**Not yet named**, pending the tickets that build the relevant surface (accepted by inspection
+until then is not sufficient for these — they're behavioral claims, not CRUD — this is a gap,
+not a decision): R-4 (paused endpoints accumulate and are never claimed), R-9 (event status
+visible during expansion), R-10 (fan-out completeness against all subscribed endpoints), R-20
+(receiver dedupe rule doesn't defeat replay of a previously-failed event), R-23–25 (read-surface
+correctness: delivery detail, event search, endpoint health). Each needs a `make test`-level API
+assertion, not a chaos/load scenario — specify alongside the visibility API (#20) and the dedupe
+contract fix (see PRD §6, tracked separately).
+
+**Accepted by inspection, no dynamic test needed:** R-1 (register an endpoint) and R-5 (publish
+returns 202 with an event ID) are plain CRUD — their correctness is visible directly in the
+route handler, and `make test` already exercises them incidentally via fixtures for the rows
+above.
 
 `make verify` runs all of the above. Seeds are logged, time is injected, and artifacts land
 in `evidence/` and regenerate in CI.

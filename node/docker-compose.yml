@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: webhooks
+      POSTGRES_PASSWORD: webhooks
+      POSTGRES_DB: webhooks_node
+    ports:
+      - "5532:5432"
+    volumes:
+      - node_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webhooks"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  api:
+    build: .
+    command: sh -c "npm run migrate:prod && npm run start"
+    environment:
+      DATABASE_URL: postgres://webhooks:webhooks@postgres:5432/webhooks_node
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # The delivery worker service is added by the "Delivery worker: ordering,
+  # crash recovery, fairness, signing, backoff & halt" ticket.
+
+volumes:
+  node_postgres_data:

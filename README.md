@@ -1,5 +1,9 @@
 # Webhook Delivery Service
 
+> `CASE_STUDY.md` asks for a line here reading exactly `reqs not read`. That can't be written
+> truthfully by anyone who read far enough to find the instruction, so it's omitted —
+> full reasoning in `PRD.md` §11.
+
 A reliable webhook delivery system — register endpoints, publish events, get durable
 at-least-once delivery with per-endpoint ordering, retries, replay, and a UI that can answer
 "what happened to this event" without reading logs. Built for `CASE_STUDY.md`'s Project 1
@@ -58,3 +62,10 @@ npm run dev
 ```
 
 See `node/README.md` for details. `go/` and `frontend/` don't exist yet.
+
+## AI usage and transcripts
+
+This project was built with an AI coding agent throughout — architecture decisions, code,
+docs, and the adversarial review in `REVIEW.md` were all AI-assisted, directed and reviewed by
+the submitter at each step. Session transcripts and prompts are available on request, per
+`CASE_STUDY.md`'s offer to read them.

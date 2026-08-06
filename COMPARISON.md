@@ -15,7 +15,7 @@ vendor doesn't publish something, this says so instead of guessing.
 | Dimension | Ours | Stripe | Shopify | GitHub |
 |---|---|---|---|---|
 | **Ordering** | Strict FIFO per endpoint, enforced by the sender via a `busy` row lock — one delivery in flight per endpoint | Explicitly not guaranteed, any order | Explicitly not guaranteed, any order, even within one topic | Explicitly not guaranteed, any order |
-| **Retry/backoff** | Full-jitter exponential: 1s base, 2x, 30s cap, 6 attempts (~61s), then endpoint halts (manual resume) | Exponential backoff, automatic, over up to **3 days** (live mode); sandbox: 3 tries over a few hours; count not specified, only duration | Exponential backoff, **8 attempts over 4 hours**, then subscription auto-removed + email sent | **No automatic retry at all** — only manual redelivery (UI/API), within a 3-day window |
+| **Retry/backoff** | Full-jitter exponential: 1s base, 2x, 30s cap, 6 attempts (~91s worst case, incl. attempt time), then endpoint halts (manual resume) | Exponential backoff, automatic, over up to **3 days** (live mode); sandbox: 3 tries over a few hours; count not specified, only duration | Exponential backoff, **8 attempts over 4 hours**, then subscription auto-removed + email sent | **No automatic retry at all** — only manual redelivery (UI/API), within a 3-day window |
 | **Signing** | HMAC-SHA256 over `"{timestamp}.{raw_body}"`, `Webhook-*` headers, 5-min tolerance, receiver dual-checks old+new secret during rotation | HMAC-SHA256 over `"{timestamp}.{raw_body}"` (same formula), `Stripe-Signature` header, 5-min default tolerance, **sender** signs with both secrets during a rotation window (up to 24h) | HMAC-SHA256 over raw body, `X-Shopify-Hmac-Sha256` header, no timestamp/tolerance documented, no dual-secret window documented (rotation take up to 1hr to propagate) | HMAC-SHA256 over raw payload, `X-Hub-Signature-256` header, no timestamp/tolerance documented, no secret-rotation mechanism documented |
 | **Idempotency** | Caller-supplied `Idempotency-Key` on publish/replay; stable `event_id` across retries and replays; at-least-once is a stated non-goal to fix | Dedupe on event `id`; explicit "may receive the same event more than once" guidance | Dedupe on `X-Shopify-Webhook-Id`; separate `X-Shopify-Event-Id` shared across deliveries from one merchant action | Dedupe on `X-GitHub-Delivery`; note: a manual redelivery reuses the *same* delivery ID as the original |
 | **Replay** | Re-inserts into the same per-endpoint queue; can delay live traffic on that endpoint, by design | Manual resend (dashboard: 15 days, CLI: 30 days); explicitly does **not** cancel the automatic retry track; no documented interaction with live-traffic queueing/priority | No documented resend/replay API; recovery is manual re-subscribe + backfill via the API | Manual redelivery only, 3-day lookback; no documented interaction with live-traffic priority |
@@ -177,17 +177,34 @@ and [Troubleshooting webhooks](https://docs.github.com/en/webhooks/testing-and-t
 The signing scheme is the strongest validation: this project's `"{timestamp}.{raw_body}"` HMAC
 construction is *exactly* Stripe's, and the 5-minute tolerance matches Stripe's documented default
 — that's not a coincidence so much as convergent evolution on a well-understood pattern, which is
-a good sign this piece is right. The ordering decision is this project's sharpest departure from
-all three vendors — Stripe, Shopify, and GitHub each explicitly refuse to guarantee order and push
-sequencing onto the receiver via timestamps, while this project guarantees strict per-endpoint
-FIFO — but that's a deliberate response to a spec requirement none of these three vendors had to
-satisfy, not a naive gap. The retry/halt model sits in reasonable company: closer to Shopify's
-fixed-attempt-then-terminal-action shape than to Stripe's open-ended 3-day window or GitHub's
-no-auto-retry-at-all stance, and this project's choice to retain a resumable `halted` state (rather
-than Shopify's outright subscription deletion) is arguably the more integrator-friendly of the
-two. The one real gap worth naming if this ever moved toward production: none of the four systems
-compared here — including this one — publicly document how they prevent one tenant's traffic from
-starving another's on shared delivery infrastructure, which means this project's single
-least-recently-served-tenant sort order is comparatively *more* transparent than any of the three
-vendors, but it's also the least battle-tested of the seven mechanisms, since there's no
-production precedent to check it against.
+a good sign this piece is right. The ordering decision is this project's sharpest *deliberate*
+departure from all three vendors — Stripe, Shopify, and GitHub each explicitly refuse to guarantee
+order and push sequencing onto the receiver via timestamps, while this project guarantees strict
+per-endpoint FIFO — but that's a direct response to a spec requirement none of these three vendors
+had to satisfy, not a naive gap.
+
+Two real gaps are worth naming if this ever moved toward production, and they're different in
+kind:
+
+- **Retry window duration.** This is the sharper of the two. This project halts after roughly
+  91 seconds worst case (6 attempts, 5 backoff gaps totaling ~31s, plus up to 6× the outbound
+  timeout if every attempt actually times out rather than failing fast — corrected 2026-08-06;
+  an earlier draft understated this as "~61s," which didn't follow from the stated parameters)
+  — Shopify retries for **4 hours** (8 attempts) before its terminal action, and Stripe retries
+  for **up to 3 days**. Put in relative terms, our window is roughly **158x shorter than
+  Shopify's and about 2,850x shorter than Stripe's**. That's a difference in kind, not
+  degree: a receiver blip that any of the three vendors would silently ride out — a 2-minute
+  deploy, a container restart — is enough to exhaust every attempt here and halt the endpoint,
+  requiring an operator to notice and manually resume it. The values were chosen partly so
+  `make chaos`/`make test` could observe a full retry-to-halt cycle in an automated run without
+  waiting hours, which is a reasonable reason for a *test* default but not a *production* one. The
+  values are already env-configurable, so this is a default to widen, not a redesign. Where this
+  project does come out ahead of Shopify specifically: halting retains the endpoint and its full
+  attempt history for a resumable operator action, rather than Shopify's terminal move of deleting
+  the subscription outright.
+- **Tenant fairness has no production precedent to check against.** None of the four systems
+  compared here — including this one — publicly document how they prevent one tenant's traffic
+  from starving another's on shared delivery infrastructure. This project's single
+  least-recently-served-tenant sort order is comparatively *more* transparent than any of the three
+  vendors' opaque approach, but transparency isn't the same as being proven — it's the least
+  battle-tested of the seven mechanisms compared here.

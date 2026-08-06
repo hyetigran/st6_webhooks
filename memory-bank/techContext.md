@@ -18,7 +18,11 @@ not aspirational, only what's actually true right now.
   on the dev machine. `DATABASE_URL` default and `docker-compose.yml` both use 5532.
 - **API port**: 3000.
 - **Auth**: tenants are seeded out-of-band via `npm run seed` (prints an API key) — there is no
-  signup route, deliberately.
+  signup route, deliberately. The key is hashed (SHA-256) before storage, in `tenants.api_key_hash`.
+- **Crypto**: `src/lib/crypto.ts` — `hashApiKey` (SHA-256, for auth lookups) and
+  `encryptSecret`/`decryptSecret` (AES-256-GCM, for `signing_secret`/`secondary_secret` at rest).
+  Requires `SECRET_ENCRYPTION_KEY` (32-byte, base64) in env — no fallback, throws on startup if
+  missing or wrong length.
 
 ## Go stack (`go/`) — not started
 
