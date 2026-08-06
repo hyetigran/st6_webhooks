@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { pool } from "../src/db/pool.js";
 import { claimDelivery } from "../src/worker/delivery.js";
-import { createTenant, createEndpoint, createPendingDelivery } from "./fixtures.js";
+import { createTenant, createEndpoint, createDelivery } from "./fixtures.js";
 
 const LEASE_DURATION_MS = 60_000;
 
@@ -9,7 +9,7 @@ describe("claimDelivery", () => {
   it("claims the endpoint's oldest pending delivery, marks it in_flight, and inserts a sent attempt row", async () => {
     const { id: tenantId } = await createTenant();
     const endpoint = await createEndpoint(tenantId, ["order.created"], { url: "https://example.com/hook", signingSecret: "whsec_abc" });
-    const { id: deliveryId, eventId } = await createPendingDelivery(tenantId, endpoint.id, {
+    const { id: deliveryId, eventId } = await createDelivery(tenantId, endpoint.id, {
       eventType: "order.created",
       payload: { orderId: "123" },
     });
@@ -56,7 +56,7 @@ describe("claimDelivery", () => {
   it("updates the claimed endpoint's tenant last_served_at", async () => {
     const { id: tenantId } = await createTenant();
     const endpoint = await createEndpoint(tenantId, ["order.created"]);
-    await createPendingDelivery(tenantId, endpoint.id);
+    await createDelivery(tenantId, endpoint.id);
 
     await claimDelivery(pool, LEASE_DURATION_MS);
 
@@ -71,8 +71,8 @@ describe("claimDelivery", () => {
 
     const quietEndpoint = await createEndpoint(quietTenant.id, ["order.created"]);
     const servedEndpoint = await createEndpoint(servedTenant.id, ["order.created"]);
-    await createPendingDelivery(quietTenant.id, quietEndpoint.id);
-    await createPendingDelivery(servedTenant.id, servedEndpoint.id);
+    await createDelivery(quietTenant.id, quietEndpoint.id);
+    await createDelivery(servedTenant.id, servedEndpoint.id);
 
     const claimed = await claimDelivery(pool, LEASE_DURATION_MS);
 
@@ -82,7 +82,7 @@ describe("claimDelivery", () => {
   it("returns null when the only pending delivery's endpoint is already busy within its lease", async () => {
     const { id: tenantId } = await createTenant();
     const endpoint = await createEndpoint(tenantId, ["order.created"]);
-    await createPendingDelivery(tenantId, endpoint.id);
+    await createDelivery(tenantId, endpoint.id);
     await pool.query("UPDATE endpoints SET busy = true, busy_since = now(), lease_id = gen_random_uuid() WHERE id = $1", [endpoint.id]);
 
     const claimed = await claimDelivery(pool, LEASE_DURATION_MS);
@@ -98,7 +98,7 @@ describe("claimDelivery", () => {
   it("reclaims a stale-leased endpoint: closes the orphaned in-flight attempt and requeues its delivery as the new claim", async () => {
     const { id: tenantId } = await createTenant();
     const endpoint = await createEndpoint(tenantId, ["order.created"]);
-    const { id: deliveryId } = await createPendingDelivery(tenantId, endpoint.id);
+    const { id: deliveryId } = await createDelivery(tenantId, endpoint.id);
 
     // Simulate a worker that claimed this delivery, sent an attempt, then
     // died before writing back — busy_since is far enough in the past that
@@ -132,7 +132,7 @@ describe("claimDelivery", () => {
       secondarySecret: "whsec_old",
       secondarySecretExpiresAt: new Date(Date.now() + 60_000),
     });
-    await createPendingDelivery(tenantId, endpoint.id);
+    await createDelivery(tenantId, endpoint.id);
 
     const claimed = await claimDelivery(pool, LEASE_DURATION_MS);
 
@@ -146,7 +146,7 @@ describe("claimDelivery", () => {
       secondarySecret: "whsec_old",
       secondarySecretExpiresAt: new Date(Date.now() - 60_000),
     });
-    await createPendingDelivery(tenantId, endpoint.id);
+    await createDelivery(tenantId, endpoint.id);
 
     const claimed = await claimDelivery(pool, LEASE_DURATION_MS);
 
@@ -157,8 +157,8 @@ describe("claimDelivery", () => {
     const { id: tenantId } = await createTenant();
     const endpointA = await createEndpoint(tenantId, ["order.created"]);
     const endpointB = await createEndpoint(tenantId, ["order.created"]);
-    await createPendingDelivery(tenantId, endpointA.id);
-    await createPendingDelivery(tenantId, endpointB.id);
+    await createDelivery(tenantId, endpointA.id);
+    await createDelivery(tenantId, endpointB.id);
 
     const [first, second] = await Promise.all([
       claimDelivery(pool, LEASE_DURATION_MS),
