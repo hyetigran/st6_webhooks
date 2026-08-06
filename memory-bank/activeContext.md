@@ -40,9 +40,12 @@ the shared frontend, one of which (`#16`) is built.
 - **`DECISIONS.md` was compressed** from a peak of ~2644 words (absorbing all 17 findings) to
   ~1472, leaning on the new `docs/adr/` files for detail instead of re-explaining inline.
 - **C-1** (the `reqs not read` omission note) restored to the top of `README.md` — it had gone
-  missing in an earlier edit. **C-3**: user confirmed willing to share session transcripts;
-  noted in `README.md`. **C-2** (time spent) is still open — genuinely needs the user's answer,
-  can't be filled in by an agent.
+  missing in an earlier edit. **Update**: the user removed it again themselves in a later
+  session (commit `0af1d5b`, "remove wording from readme") and confirmed during ticket #17's
+  code review that this second removal is intentional, not a repeat of the earlier accident —
+  don't re-restore it. **C-3**: user confirmed willing to share session transcripts; noted in
+  `README.md`. **C-2** (time spent) is still open — genuinely needs the user's answer, can't be
+  filled in by an agent.
 - Every Mermaid diagram in `ARCHITECTURE.md` (8 total) was validated against the real parser,
   not just eyeballed — this caught real syntax bugs (HTML entities and mid-message semicolons
   break Mermaid's sequence-diagram grammar) more than once this session.
