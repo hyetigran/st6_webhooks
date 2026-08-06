@@ -4,7 +4,8 @@ import { pool } from "../db/pool.js";
 import { validateEndpointUrl } from "../validation/url.js";
 import { generateSecret } from "../lib/secrets.js";
 import { encryptSecret } from "../lib/crypto.js";
-import { decodeCursor, encodeCursor, parseLimit } from "../lib/pagination.js";
+import { decodeCursor, encodeCursor, decodeSeqCursor, encodeSeqCursor, parseLimit } from "../lib/pagination.js";
+import { HEAD_DELIVERY_SELECT, serializeDeliverySummary } from "../lib/deliveryQueries.js";
 import { secretRotation } from "../config.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 
@@ -228,5 +229,61 @@ endpointsRouter.post("/endpoints/:id/secret/rotate", asyncHandler(async (req, re
   res.json({
     signing_secret: newSecret,
     overlap_expires_at: overlapExpiresAt.toISOString(),
+  });
+}));
+
+interface QueueDeliveryRow {
+  id: string;
+  event_id: string;
+  state: string;
+  attempt_count: number;
+  next_attempt_at: Date;
+  seq: string;
+  head_delivery_id: string | null;
+}
+
+// §7 surface 4: ordered deliveries for one endpoint, head highlighted.
+// Ascending by seq (head first, the actionable item) — deliberately the
+// opposite direction from every other list route's newest-first paging, so
+// this uses its own `after`/seq-based cursor (docs/adr/0007) rather than
+// the shared `before`/created_at+id one: reusing created_at here would hit
+// the exact same same-endpoint tie risk that column was added to avoid.
+endpointsRouter.get("/endpoints/:id/deliveries", asyncHandler(async (req, res) => {
+  const { rows: endpointRows } = await pool.query("SELECT id FROM endpoints WHERE id = $1 AND tenant_id = $2", [
+    req.params.id,
+    req.tenantId,
+  ]);
+  if (!endpointRows[0]) {
+    res.status(404).json({ error: { code: "not_found", message: "Endpoint not found" } });
+    return;
+  }
+
+  const limit = parseLimit(req.query.limit);
+  const cursor = typeof req.query.after === "string" ? decodeSeqCursor(req.query.after) : null;
+
+  const params: unknown[] = [req.params.id];
+  let cursorClause = "";
+  if (cursor) {
+    params.push(cursor.seq);
+    cursorClause = `AND d.seq > $${params.length}`;
+  }
+  params.push(limit + 1);
+
+  const { rows } = await pool.query<QueueDeliveryRow>(
+    `SELECT d.id, d.event_id, d.state, d.attempt_count, d.next_attempt_at, d.seq, ${HEAD_DELIVERY_SELECT}
+     FROM deliveries d
+     WHERE d.endpoint_id = $1 ${cursorClause}
+     ORDER BY d.seq ASC
+     LIMIT $${params.length}`,
+    params,
+  );
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page[page.length - 1];
+
+  res.json({
+    deliveries: page.map(serializeDeliverySummary),
+    next_cursor: hasMore && last ? encodeSeqCursor({ seq: Number(last.seq) }) : null,
   });
 }));

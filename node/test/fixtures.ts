@@ -69,3 +69,54 @@ export async function createDelivery(
   );
   return { id: deliveryRows[0]!.id, eventId };
 }
+
+// Bypasses publish (ticket #17) to seed an event directly — read-API tests
+// (ticket #20) need control over fields (created_at, in particular) publish
+// doesn't expose.
+export async function createEvent(
+  tenantId: string,
+  opts: { type?: string; payload?: object; status?: string; createdAt?: Date } = {},
+): Promise<{ id: string }> {
+  const { rows } = await pool.query<{ id: string }>(
+    `INSERT INTO events (tenant_id, idempotency_key, type, payload, status, created_at)
+     VALUES ($1, $2, $3, $4, $5, COALESCE($6, now()))
+     RETURNING id`,
+    [
+      tenantId,
+      `event-fixture-${crypto.randomUUID()}`,
+      opts.type ?? "order.created",
+      JSON.stringify(opts.payload ?? { hello: "world" }),
+      opts.status ?? "expanded",
+      opts.createdAt ?? null,
+    ],
+  );
+  return { id: rows[0]!.id };
+}
+
+export async function createAttempt(
+  deliveryId: string,
+  opts: {
+    attemptNumber?: number;
+    sentAt?: Date;
+    responseStatus?: number | null;
+    responseBodyTruncated?: string | null;
+    durationMs?: number | null;
+    errorClass?: string | null;
+  } = {},
+): Promise<{ id: string }> {
+  const { rows } = await pool.query<{ id: string }>(
+    `INSERT INTO attempts (delivery_id, attempt_number, sent_at, response_status, response_body_truncated, duration_ms, error_class)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id`,
+    [
+      deliveryId,
+      opts.attemptNumber ?? 1,
+      opts.sentAt ?? new Date(),
+      opts.responseStatus ?? null,
+      opts.responseBodyTruncated ?? null,
+      opts.durationMs ?? null,
+      opts.errorClass ?? null,
+    ],
+  );
+  return { id: rows[0]!.id };
+}
