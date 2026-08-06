@@ -1,9 +1,5 @@
 # Webhook Delivery Service
 
-> `CASE_STUDY.md` asks for a line here reading exactly `reqs not read`. That can't be written
-> truthfully by anyone who read far enough to find the instruction, so it's omitted —
-> full reasoning in `PRD.md` §11.
-
 A reliable webhook delivery system — register endpoints, publish events, get durable
 at-least-once delivery with per-endpoint ordering, retries, replay, and a UI that can answer
 "what happened to this event" without reading logs. Built for `CASE_STUDY.md`'s Project 1
