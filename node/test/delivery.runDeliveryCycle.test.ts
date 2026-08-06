@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 import { pool } from "../src/db/pool.js";
 import { runDeliveryCycle } from "../src/worker/delivery.js";
 import { resolveAndPin } from "../src/worker/httpClient.js";
-import { createTenant, createEndpoint, createPendingDelivery } from "./fixtures.js";
+import { createTenant, createEndpoint, createDelivery } from "./fixtures.js";
 import { createTestServerHarness } from "./testServer.js";
 
 const testServer = createTestServerHarness();
@@ -53,7 +53,7 @@ describe("runDeliveryCycle", () => {
       url: `http://delivery-worker-test.invalid:${port}/webhook`,
       signingSecret: "whsec_test_secret",
     });
-    const { id: deliveryId, eventId } = await createPendingDelivery(tenantId, endpoint.id, {
+    const { id: deliveryId, eventId } = await createDelivery(tenantId, endpoint.id, {
       eventType: "order.created",
       payload: { orderId: "abc123" },
     });
@@ -93,7 +93,7 @@ describe("runDeliveryCycle", () => {
       secondarySecret: "whsec_old",
       secondarySecretExpiresAt: new Date(Date.now() + 60_000),
     });
-    await createPendingDelivery(tenantId, endpoint.id, { payload: { orderId: "rotation-test" } });
+    await createDelivery(tenantId, endpoint.id, { payload: { orderId: "rotation-test" } });
 
     await runDeliveryCycle(pool, { resolveAndPin: trustPinnedLoopback() });
 
@@ -109,7 +109,7 @@ describe("runDeliveryCycle", () => {
     const connectSpy = vi.fn();
     const { id: tenantId } = await createTenant();
     const endpoint = await createEndpoint(tenantId, ["order.created"], { url: "http://rebinding-host.invalid:1/webhook" });
-    const { id: deliveryId } = await createPendingDelivery(tenantId, endpoint.id);
+    const { id: deliveryId } = await createDelivery(tenantId, endpoint.id);
 
     const rebindingResolver = async (h: string) => {
       connectSpy(h);

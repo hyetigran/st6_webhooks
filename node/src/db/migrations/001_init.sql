@@ -11,8 +11,11 @@ CREATE TABLE tenants (
   -- token no one is guessing, so bcrypt/scrypt would only add latency to
   -- every authenticated request for no security benefit.
   api_key_hash    TEXT NOT NULL UNIQUE,
-  -- ADR-007 tenant fairness: least-recently-served-tenant ordering in the
-  -- delivery worker's claim query. NULL sorts first (never yet served).
+  -- Tenant fairness (docs/adr/0004-tenant-fairness-bound.md): least-
+  -- recently-served-tenant ordering in the delivery worker's claim query.
+  -- NULL sorts first (never yet served). Not "ADR-007" — that label is the
+  -- wayfinder map's own decision numbering (issue #8), predating the
+  -- docs/adr/ folder; a different, unrelated ADR-0007 lives there now.
   last_served_at  TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -87,10 +90,12 @@ CREATE TABLE deliveries (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id          UUID NOT NULL REFERENCES events(id),
   endpoint_id       UUID NOT NULL REFERENCES endpoints(id),
-  -- ADR-002: ordering within an endpoint's queue is natural insertion order
-  -- (this table's own created_at/id), not a separate sequence counter — this
-  -- is why expansion (ADR-004) and replay (ADR-005) must insert rows in the
-  -- order those events/deliveries originally happened.
+  -- ADR-002: ordering within an endpoint's queue follows this table's own
+  -- seq column (added in migration 002, ADR-0007 — created_at alone isn't
+  -- enough, since Postgres's now() is transaction-stable and a same-endpoint
+  -- bulk insert would give every new row an identical value) — this is why
+  -- expansion (ADR-004) and replay (ADR-005) must insert rows in the order
+  -- those events/deliveries originally happened.
   -- 'failed' is terminal: attempt ceiling reached for this delivery, which is
   -- also what triggers endpoints.status = 'halted'. Halting itself is an
   -- endpoint-level concept (ADR: Halted-endpoint notification path) — it

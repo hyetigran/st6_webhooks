@@ -63,7 +63,7 @@ export async function claimDelivery(pool: pg.Pool, leaseDurationMs: number): Pro
            AND ((d.state = 'pending' AND d.next_attempt_at <= now()) OR d.state = 'in_flight')
        )
      ORDER BY t.last_served_at ASC NULLS FIRST,
-       (SELECT MIN(d.created_at) FROM deliveries d
+       (SELECT MIN(d.seq) FROM deliveries d
         WHERE d.endpoint_id = e.id
           AND ((d.state = 'pending' AND d.next_attempt_at <= now()) OR d.state = 'in_flight')) ASC
      LIMIT 20`,
@@ -123,7 +123,7 @@ async function tryClaimEndpoint(pool: pg.Pool, candidate: CandidateRow, cutoff: 
      JOIN events e ON e.id = d.event_id
      JOIN endpoints ep ON ep.id = d.endpoint_id
      WHERE d.endpoint_id = $1 AND d.state = 'pending' AND d.next_attempt_at <= now()
-     ORDER BY d.created_at
+     ORDER BY d.seq
      LIMIT 1`,
     [candidate.id],
   );

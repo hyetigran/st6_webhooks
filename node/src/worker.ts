@@ -3,6 +3,7 @@ import https from "node:https";
 import { pool } from "./db/pool.js";
 import { runExpansionCycle } from "./worker/expansion.js";
 import { runDeliveryCycle } from "./worker/delivery.js";
+import { runReplayExpansionCycle } from "./worker/replayExpansion.js";
 import { worker as workerConfig, outboundHttp } from "./config.js";
 
 // Shared per-host connection limit (R-16): http.Agent/https.Agent's
@@ -13,10 +14,10 @@ const agents = {
   https: new https.Agent({ maxSockets: outboundHttp.maxConnectionsPerHost }),
 };
 
-// Shared worker pool per DECISIONS.md: one process runs both expansion
-// (ticket #17) and delivery (ticket #18), not two separate loops — each
-// cycle tries both mechanisms, and the poll interval only kicks in when
-// neither found work, so a backlog in either drains immediately.
+// Shared worker pool per DECISIONS.md: one process runs expansion (#17),
+// delivery (#18), and replay expansion (#19), not separate loops — each
+// cycle tries every mechanism, and the poll interval only kicks in when
+// none found work, so a backlog in any of them drains immediately.
 async function loop(): Promise<void> {
   for (;;) {
     let didWork = false;
@@ -24,6 +25,11 @@ async function loop(): Promise<void> {
       didWork = (await runExpansionCycle(pool)) || didWork;
     } catch (err) {
       console.error("expansion cycle failed:", err);
+    }
+    try {
+      didWork = (await runReplayExpansionCycle(pool)) || didWork;
+    } catch (err) {
+      console.error("replay expansion cycle failed:", err);
     }
     try {
       didWork = (await runDeliveryCycle(pool, { agents })) || didWork;

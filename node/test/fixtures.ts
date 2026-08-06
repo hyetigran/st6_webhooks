@@ -39,13 +39,13 @@ export async function createEndpoint(
   return { id: rows[0]!.id };
 }
 
-// Bypasses publish/expansion (ticket #17) to seed a delivery directly in
-// 'pending' state — delivery-worker tests (ticket #18) exercise the claim
-// and send path, not expansion, so they don't need a real publish flow.
-export async function createPendingDelivery(
+// Bypasses publish/expansion (ticket #17) to seed a delivery directly —
+// delivery-worker and replay tests (tickets #18/#19) exercise the claim/
+// send/replay paths, not expansion, so they don't need a real publish flow.
+export async function createDelivery(
   tenantId: string,
   endpointId: string,
-  opts: { eventType?: string; payload?: object; nextAttemptAt?: Date } = {},
+  opts: { eventType?: string; payload?: object; nextAttemptAt?: Date; state?: string; createdAt?: Date } = {},
 ): Promise<{ id: string; eventId: string }> {
   const { rows: eventRows } = await pool.query<{ id: string }>(
     `INSERT INTO events (tenant_id, idempotency_key, type, payload, status)
@@ -55,16 +55,17 @@ export async function createPendingDelivery(
   );
   const eventId = eventRows[0]!.id;
 
-  // next_attempt_at defaults to Postgres's own now(), not a Node-side
-  // `new Date()` — claimDelivery compares this column against Postgres's
-  // now() too, and any clock skew between the Node process and the Docker
-  // Postgres container (real, and enough to matter here) would otherwise
-  // make "immediately claimable" intermittently false.
+  // next_attempt_at/created_at default to Postgres's own now(), not a
+  // Node-side `new Date()` — claim and replay queries compare these columns
+  // against Postgres's now() too, and any clock skew between the Node
+  // process and the Docker Postgres container (real, and enough to matter
+  // here) would otherwise make "immediately claimable"/"in this window"
+  // intermittently wrong.
   const { rows: deliveryRows } = await pool.query<{ id: string }>(
-    opts.nextAttemptAt
-      ? `INSERT INTO deliveries (event_id, endpoint_id, next_attempt_at) VALUES ($1, $2, $3) RETURNING id`
-      : `INSERT INTO deliveries (event_id, endpoint_id, next_attempt_at) VALUES ($1, $2, now()) RETURNING id`,
-    opts.nextAttemptAt ? [eventId, endpointId, opts.nextAttemptAt] : [eventId, endpointId],
+    `INSERT INTO deliveries (event_id, endpoint_id, state, next_attempt_at, created_at)
+     VALUES ($1, $2, $3, COALESCE($4, now()), COALESCE($5, now()))
+     RETURNING id`,
+    [eventId, endpointId, opts.state ?? "pending", opts.nextAttemptAt ?? null, opts.createdAt ?? null],
   );
   return { id: deliveryRows[0]!.id, eventId };
 }

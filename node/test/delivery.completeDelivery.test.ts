@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { pool } from "../src/db/pool.js";
 import { claimDelivery, completeDelivery, type ClaimedDelivery } from "../src/worker/delivery.js";
-import { createTenant, createEndpoint, createPendingDelivery } from "./fixtures.js";
+import { createTenant, createEndpoint, createDelivery } from "./fixtures.js";
 
 const LEASE_DURATION_MS = 60_000;
 const backoffConfig = { baseDelayMs: 1_000, multiplier: 2, maxDelayMs: 30_000, maxAttempts: 6 };
@@ -9,7 +9,7 @@ const backoffConfig = { baseDelayMs: 1_000, multiplier: 2, maxDelayMs: 30_000, m
 async function setUpClaimedDelivery(): Promise<{ claimed: ClaimedDelivery; endpointId: string; deliveryId: string }> {
   const { id: tenantId } = await createTenant();
   const endpoint = await createEndpoint(tenantId, ["order.created"]);
-  const { id: deliveryId } = await createPendingDelivery(tenantId, endpoint.id);
+  const { id: deliveryId } = await createDelivery(tenantId, endpoint.id);
   const claimed = await claimDelivery(pool, LEASE_DURATION_MS);
   return { claimed: claimed!, endpointId: endpoint.id, deliveryId };
 }
