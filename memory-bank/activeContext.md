@@ -40,7 +40,25 @@ steps") — not a ticket, a decision-application step using data that now exists
   `#28` fix was a partial patch that only masked the 4xx case). Committed straight to `main` (no
   ticket/MR — this wasn't ticket-scoped work).
 
+- **Landing page brought closer to the mockup** (standalone, user-requested after noticing the drift — not a ticket) — the mockup
+  (`Webhook API server landing and dashboard/Gauntlet Relay Landing.dc.html`) has a "Latest run" evidence panel, a closing CTA
+  with a delivery-timeline illustration, and a footer that the original build (ticket `#28`) never carried over; only the design
+  tokens (fonts/colors/spacing) had been faithfully extracted, not the full page content. Added all three. The evidence panel
+  deliberately does **not** reuse the mockup's own numbers ("0 of 50,000", "1,200 crashes", "under 180ms") — those were
+  placeholder marketing figures with no real evidence behind them. Replaced with real numbers read from
+  `evidence/{load,chaos}/*.json` and `evidence/go/{load,chaos}/*.json`: 3 of 3 properties, 5 of 5 chaos scenarios, and the real
+  measured noisy-neighbor p99s (226ms Node / 127ms Go) against the load test's own bound (p99 < 5s — the spec sets no fixed
+  number, see `node/load/noisy-neighbor.ts`). Deliberately skipped the mockup's fully-interactive animated pipeline diagram
+  (`#instrument` — region/backend/scenario pickers, live throughput/p99/worker stats) since replicating it needs either a real
+  live-simulation backend or fabricated numbers; the existing static "The pipeline" card grid already covers the same content
+  honestly. Committed straight to `main` (`77a7edf`) — no ticket/MR. **Not live-verified in a browser this session** — the Chrome
+  extension wasn't connected; typecheck/lint/test/build are all clean and it only composes already-verified design primitives
+  (`Card`, `Badge`, `Button`), but an actual visual check is still owed next session.
+
 ## Next steps
+
+- **Verify the landing page visually** in a real browser — skipped last session only because the Chrome extension wasn't
+  connected, not because it was low-risk enough to skip on purpose.
 
 - **Primary-build designation** (ticket `#14`'s already-decided criteria) is the one remaining
   piece of work on the whole project — both stacks now have real `make load` evidence
