@@ -111,6 +111,20 @@ not a replacement for it.
   Node's `deliveryQueries.ts`. Live-verified: registered, published, delivered a real event to
   postman-echo.com, exercised all four routes against real data — the actual echoed HMAC
   headers appear correctly in `last_response`/`attempts`.
+- **Go — test suite & deployment** (`#27`, last Go-track ticket): built out all of PRD §8's
+  acceptance criteria, mirroring Node's `#21` shape exactly — `make properties` (3 seeded
+  invariants: expansion order under concurrent workers, repeated publish-key idempotency, replay
+  crash-safety), `make chaos` (5 scenarios against real spawned/signaled processes:
+  worker-kill-mid-delivery, worker-stall-fencing/SIGSTOP-SIGCONT, partition-head-blocked-then-
+  drains, crash-after-successful-send, expansion-crash-order via a dedicated `expansionholder`
+  binary), `make load` (4 scenarios: publish/replay latency-flat, noisy-neighbor, tarpit-fairness),
+  `make verify` orchestrating all with evidence in `evidence/go/` (deliberately namespaced apart
+  from Node's `evidence/{chaos,load}/` — see gotchas). Finalized `docker-compose.yml` (added the
+  `worker` service) and rewrote `go/README.md` as a real clone-to-run guide, live-verified end to
+  end (`docker compose up --build`, seed, register, publish, confirmed real delivery through the
+  running stack). Found and fixed two real bugs while live-verifying — see gotchas below.
+  `/code-review`'s Spec axis found zero issues; Standards axis found real scenario-code
+  duplication and a genuine `sync.Once` bug in test setup, both fixed in a follow-up commit.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -121,29 +135,24 @@ not a replacement for it.
 
 ## What's built but not yet exercised end-to-end
 
-Nothing — the entire Node stack has been verified live against real running processes, real
-external infrastructure (httpbin.org), real historical data, and (for `#21`) a real Docker
-Compose deployment. Node is done.
+Nothing — both the Node and Go stacks have been verified live against real running processes,
+real external infrastructure (httpbin.org, postman-echo.com), real historical data, and (for
+`#21`/`#27`) a real Docker Compose deployment each. Both backends are done.
 
 ## What doesn't exist yet
 
-- **Go**: `#22`-`#26` (schema/scaffolding/endpoint API, publish & async expansion, delivery
-  worker, replay, visibility & read API) are done — see "What works" above. Only `#27` (test
-  suite & deployment) remains, mirroring Node ticket-for-ticket including every review-driven
-  fix, not the pre-review design. Go's own "Test suite & deployment" ticket (`#27`)
-  must build the identical PRD §8 suite — see this file's own `#21` entry above ("What works")
-  for the full shape Node established (`make test`/`properties`/`chaos`/`load`/`verify`, real
-  spawned processes/signals for chaos, real spawned api/worker for load).
 - **Frontend**: entire SPA (`#28-30`) — buildable now against the fixed REST contract, every
-  route across `#16`-`#21` live-verified.
+  route across both `#16`-`#21` and `#22`-`#27` live-verified.
 - **`README.md`**: the *final submission* root version is still not started — needs primary-
-  build designation (`#14`), which needs Go to exist. `node/README.md` (owned by `#21`) is done
-  and is the real clone-to-run guide for the Node stack specifically; the root `README.md`
+  build designation (`#14`). `node/README.md` (owned by `#21`) and `go/README.md` (owned by
+  `#27`) are both done, each a real clone-to-run guide for its own stack; the root `README.md`
   stays interim until the primary build is chosen and its README supersedes the root file.
-- **Primary-build designation**: can't be decided until Go also has a `make load` result to
-  compare against Node's (captured in `evidence/load/`).
+- **Primary-build designation**: the decision criteria (`#14`) are settled, and both stacks now
+  have real `make load` evidence to apply them to (`evidence/load/` for Node, `evidence/go/load/`
+  for Go) — nobody has actually run the comparison and made the call yet.
 - **`replays.status` polling exposure**: `docs/adr/0005`'s "Consequences" note flagged this as
-  not-yet-added to the REST contract — still genuinely open, not picked up by `#20` or `#21`.
+  not-yet-added to the REST contract — still genuinely open, not picked up by `#20`, `#21`,
+  `#26`, or `#27`.
 - **C-2 (time spent) in `REVIEW.md`'s checklist**: still needs the user's answer.
 
 ## Known issues / gotchas for future sessions
@@ -278,6 +287,41 @@ Compose deployment. Node is done.
   `events.ts` doesn't schema-validate at all (passed straight through as query strings into a SQL
   comparison), so there's no Zod behavior to match there — but any *body* field parsed the same
   way as replay's `range_start`/`range_end` needs this same explicit `Z`-suffix check.
+- **`go run ./cmd/X` has the identical wrapper-process signal-delivery bug as Node's `tsx` CLI
+  binary** (see the `tsx` gotcha above) — `go run` compiles to a temp binary and execs it as a
+  *child* of the `go run` process itself, so wrapping `go run` in a `ManagedProcess` only gets a
+  handle to the outer wrapper; `SIGKILL`/`SIGSTOP` sent to it never reaches the real process.
+  Found and designed around proactively in `#27` (informed by the documented Node gotcha) rather
+  than discovered via a hung process: `go/internal/scenariosupport.StartProcess` always execs a
+  pre-built `bin/` binary directly, never `go run` — `go/Makefile`'s `chaos`/`load` targets
+  rebuild `bin/{api,chaosworker,expansionholder}` fresh first (`bin/` is gitignored).
+- **Two services both running `CREATE TABLE IF NOT EXISTS` against a fresh database at the same
+  time can still collide** — Postgres error `23505` on `pg_type_typname_nsp_index`. `IF NOT
+  EXISTS` isn't a real race guard: two concurrent sessions can both pass the existence check
+  before either commits, then collide creating the table's implicit composite type. Found live in
+  `#27` when `docker-compose.yml` first gained a `worker` service — both `api` and `worker` run
+  `./migrate` on container startup, and this raced on a fresh volume. **This bug is symmetric in
+  Node** (`node/src/db/migrate.ts` has the identical unguarded `CREATE TABLE IF NOT EXISTS`,
+  never actually hit because Node's `api`/`worker` compose services happened not to race it during
+  `#21`'s testing) — fixed in Go (`go/internal/db/migrate.go`, a `pg_advisory_lock` held for the
+  whole `Migrate` call, connection acquired via `pool.Acquire` and explicitly unlocked before
+  release) but **still latent in Node**, worth fixing there too if it ever manifests.
+- **`make test`/`go test` needing a manually-created database is a real gap versus Node**, which
+  self-creates its test database in `test/global-setup.ts`. Fixed in `#27`:
+  `testsupport.ensureTestDatabase` (mirrors `scenariosupport.ensureDatabase`'s pattern,
+  deliberately not shared with it — same separation Node keeps between its two near-identical
+  `ensureDatabase` functions). Watch for the `sync.Once` interaction: the once-guarded error must
+  be stored in a **package-level** variable, not a fresh local one, or every test after the first
+  in a binary will see a nil error and silently report success even when setup genuinely failed.
+- **A single flat `evidence/` directory shared between the Node and Go stacks lets one stack's
+  `make verify` silently clobber the other's committed evidence** — both stacks name scenarios
+  identically (e.g. `worker-kill-mid-delivery`), so a shared `evidence/{chaos,load}/` means
+  whichever stack's suite runs second overwrites the first's `.json` files. Found live in `#27`
+  when an early version of Go's `scenariosupport.writeEvidence` used the same flat path Node's
+  harness does and a `make verify` run overwrote Node's `#21` evidence in the working tree (caught
+  before committing). Fixed by namespacing Go's evidence under `evidence/go/{chaos,load}/`
+  (Node's stays at the original flat `evidence/{chaos,load}/`, untouched, since it already
+  shipped) — if a third stack is ever added, it needs its own namespace too, not the flat path.
 - **Go's dynamic-WHERE-clause routes should build the query string by direct accumulation
   (`query += fmt.Sprintf(" AND ...", ...)`), not a `conditions []string` + `strings.Join` slice**
   — the latter mirrors Node's own shape (`node/src/routes/events.ts`'s `conditions` array) closely
