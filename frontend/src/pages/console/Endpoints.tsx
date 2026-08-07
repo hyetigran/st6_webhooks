@@ -12,6 +12,8 @@ import "../../design/Table.css";
 import { formatPercent, formatRelativeTime } from "../../lib/format";
 import { ActionErrorBanner, RevealedSecretModal, ResumeDisclosureModal } from "./EndpointActionModals";
 import { useEndpointActions } from "./useEndpointActions";
+import { ReplayForm, ReplayResultModal } from "./ReplayModals";
+import { useReplayAction } from "./useReplayAction";
 
 export function Endpoints() {
   const client = useApiClient();
@@ -40,6 +42,8 @@ export function Endpoints() {
     actionError,
     setActionError,
   } = useEndpointActions([queryKey]);
+
+  const { replayTarget, setReplayTarget, replayResult, setReplayResult, replayMutation } = useReplayAction([queryKey]);
 
   const registerMutation = useMutation({
     mutationFn: (input: { url: string; event_types: string[] }) => client!.registerEndpoint(input),
@@ -94,6 +98,7 @@ export function Endpoints() {
                   onPause={() => pauseMutation.mutate(endpoint.id)}
                   onResume={() => resumeMutation.mutate(endpoint.id)}
                   onRotate={() => rotateMutation.mutate({ id: endpoint.id, url: endpoint.url })}
+                  onReplay={() => setReplayTarget({ id: endpoint.id, url: endpoint.url })}
                   busy={busyEndpointId === endpoint.id}
                 />
               ))}
@@ -114,6 +119,16 @@ export function Endpoints() {
 
       {revealedSecret && <RevealedSecretModal secret={revealedSecret} onClose={() => setRevealedSecret(null)} />}
       {resumeDisclosure && <ResumeDisclosureModal result={resumeDisclosure} onClose={() => setResumeDisclosure(null)} />}
+      {replayTarget && (
+        <ReplayForm
+          endpointUrl={replayTarget.url}
+          onClose={() => setReplayTarget(null)}
+          submitting={replayMutation.isPending}
+          error={replayMutation.isError ? (replayMutation.error as Error).message : null}
+          onSubmit={(range) => replayMutation.mutate({ endpointId: replayTarget.id, ...range })}
+        />
+      )}
+      {replayResult && <ReplayResultModal result={replayResult} onClose={() => setReplayResult(null)} />}
     </div>
   );
 }
@@ -123,12 +138,14 @@ function EndpointRow({
   onPause,
   onResume,
   onRotate,
+  onReplay,
   busy,
 }: {
   endpoint: EndpointWithHealth;
   onPause: () => void;
   onResume: () => void;
   onRotate: () => void;
+  onReplay: () => void;
   busy: boolean;
 }) {
   return (
@@ -160,6 +177,9 @@ function EndpointRow({
           )}
           <Button onClick={onRotate} disabled={busy}>
             Rotate secret
+          </Button>
+          <Button onClick={onReplay} disabled={busy}>
+            Replay…
           </Button>
         </div>
       </td>

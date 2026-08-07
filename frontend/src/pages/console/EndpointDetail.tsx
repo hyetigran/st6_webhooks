@@ -10,8 +10,10 @@ import { Field } from "../../design/Field";
 import "../../design/Table.css";
 import { deliveryTone, nextAttemptDisplay } from "../../lib/deliveryDisplay";
 import { formatDateTime, formatPercent, formatRelativeTime } from "../../lib/format";
-import { ActionErrorBanner, RevealedSecretModal } from "./EndpointActionModals";
+import { ActionErrorBanner, RevealedSecretModal, ResumeDisclosureModal } from "./EndpointActionModals";
 import { useEndpointActions } from "./useEndpointActions";
+import { ReplayForm, ReplayResultModal } from "./ReplayModals";
+import { useReplayAction } from "./useReplayAction";
 
 export function EndpointDetail() {
   const { id } = useParams<{ id: string }>();
@@ -35,17 +37,24 @@ export function EndpointDetail() {
     refetchInterval: 3000,
   });
 
-  // Resume isn't wired in here — the interactive resume flow with its R-14
-  // ordering-consequence disclosure, alongside this queue view, is #30's
-  // scope. Pause/rotate are kept as basic endpoint-management parity with
-  // the endpoints list (#28).
-  const { pauseMutation, rotateMutation, revealedSecret, setRevealedSecret, actionError, setActionError } =
-    useEndpointActions([endpointQueryKey, queueQueryKey]);
+  const {
+    pauseMutation,
+    resumeMutation,
+    rotateMutation,
+    revealedSecret,
+    setRevealedSecret,
+    resumeDisclosure,
+    setResumeDisclosure,
+    actionError,
+    setActionError,
+  } = useEndpointActions([endpointQueryKey, queueQueryKey]);
+
+  const { replayTarget, setReplayTarget, replayResult, setReplayResult, replayMutation } = useReplayAction([queueQueryKey]);
 
   if (!client) return null;
   const endpoint = endpointQuery.data;
   const queue = queueQuery.data;
-  const busy = pauseMutation.isPending || rotateMutation.isPending;
+  const busy = pauseMutation.isPending || resumeMutation.isPending || rotateMutation.isPending;
 
   return (
     <div>
@@ -69,9 +78,16 @@ export function EndpointDetail() {
               </Badge>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              {endpoint.status === "active" && (
+              <Button disabled={busy} onClick={() => setReplayTarget({ id: endpoint.id, url: endpoint.url })}>
+                Replay…
+              </Button>
+              {endpoint.status === "active" ? (
                 <Button disabled={busy} onClick={() => pauseMutation.mutate(endpoint.id)}>
                   Pause
+                </Button>
+              ) : (
+                <Button disabled={busy} onClick={() => resumeMutation.mutate(endpoint.id)}>
+                  Resume…
                 </Button>
               )}
               <Button disabled={busy} onClick={() => rotateMutation.mutate({ id: endpoint.id, url: endpoint.url })}>
@@ -88,8 +104,8 @@ export function EndpointDetail() {
               <h3 style={{ fontSize: 13, marginBottom: 8, color: "var(--color-danger)" }}>HALTED AT THE ATTEMPT CEILING</h3>
               <p style={{ fontSize: 13, margin: 0 }}>
                 The head delivery (highlighted below) exhausted its attempts, so this endpoint halted and everything
-                behind it reports Blocked. Nothing was discarded — resume from the endpoints list to skip the failed
-                head and drain the rest, or replay to retry past events without disturbing the live queue.
+                behind it reports Blocked. Nothing was discarded — Resume skips the failed head permanently and
+                drains the rest, or Replay re-delivers past events without disturbing the live queue.
               </p>
             </Card>
           )}
@@ -163,6 +179,17 @@ export function EndpointDetail() {
       )}
 
       {revealedSecret && <RevealedSecretModal secret={revealedSecret} onClose={() => setRevealedSecret(null)} />}
+      {resumeDisclosure && <ResumeDisclosureModal result={resumeDisclosure} onClose={() => setResumeDisclosure(null)} />}
+      {replayTarget && (
+        <ReplayForm
+          endpointUrl={replayTarget.url}
+          onClose={() => setReplayTarget(null)}
+          submitting={replayMutation.isPending}
+          error={replayMutation.isError ? (replayMutation.error as Error).message : null}
+          onSubmit={(range) => replayMutation.mutate({ endpointId: replayTarget.id, ...range })}
+        />
+      )}
+      {replayResult && <ReplayResultModal result={replayResult} onClose={() => setReplayResult(null)} />}
     </div>
   );
 }

@@ -39,7 +39,7 @@ export function Landing() {
           <a href="#guarantees" style={{ color: "var(--color-text)", fontSize: 14 }}>
             Guarantees
           </a>
-          <Link to="/console/endpoints">
+          <Link to="/console/overview">
             <Button variant="primary">Open the dashboard</Button>
           </Link>
         </nav>
@@ -57,7 +57,7 @@ export function Landing() {
             shows your team exactly what happened to any single event — on one screen, no engineer required.
           </p>
           <div style={{ display: "flex", gap: 12 }}>
-            <Link to="/console/endpoints">
+            <Link to="/console/overview">
               <Button variant="primary">Open the dashboard</Button>
             </Link>
             <a href="https://gitlab.com" target="_blank" rel="noreferrer">

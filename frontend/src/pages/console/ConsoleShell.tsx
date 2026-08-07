@@ -39,6 +39,9 @@ export function ConsoleShell() {
             CONSOLE
           </span>
           <nav style={{ display: "flex" }}>
+            <NavLink to="/console/overview" style={navLinkStyle}>
+              Overview
+            </NavLink>
             <NavLink to="/console/endpoints" style={navLinkStyle}>
               Endpoints
             </NavLink>
