@@ -79,6 +79,28 @@ func TestPublishEventRejectsMissingIdempotencyKey(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+// Matches node's z.record(z.unknown()): payload must be a JSON object.
+// json.Unmarshal into a map silently treats JSON `null` as "no error, nil
+// map" rather than rejecting it — this regression-tests the fix for that.
+func TestPublishEventRejectsNullPayload(t *testing.T) {
+	pool := setupPool(t)
+	ts := newTestServer(t, pool)
+	_, apiKey := createTenant(t, pool)
+
+	req, err := newJSONRequest(http.MethodPost, ts.URL+"/events", map[string]any{
+		"type":    "order.created",
+		"payload": nil,
+	})
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Idempotency-Key", "null-payload-key")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
 func TestPublishEventRejectsInvalidBody(t *testing.T) {
 	pool := setupPool(t)
 	ts := newTestServer(t, pool)

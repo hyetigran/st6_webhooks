@@ -6,15 +6,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"webhooks-go/internal/testsupport"
 	"webhooks-go/internal/worker"
 )
 
 func TestRunExpansionCycleCreatesOneDeliveryPerSubscribedEndpoint(t *testing.T) {
-	pool := setupPool(t)
+	pool := testsupport.SetupPool(t)
 	ctx := context.Background()
-	tenantID := createTenant(t, pool)
-	endpointA := createEndpoint(t, pool, tenantID, []string{"order.created"}, "")
-	endpointB := createEndpoint(t, pool, tenantID, []string{"order.created"}, "")
+	tenantID, _ := testsupport.CreateTenant(t, pool)
+	endpointA := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "")
+	endpointB := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "")
 	eventID := publishEvent(t, pool, tenantID, "order.created", "key-1")
 
 	did, err := worker.RunExpansionCycle(ctx, pool)
@@ -37,10 +38,10 @@ func TestRunExpansionCycleCreatesOneDeliveryPerSubscribedEndpoint(t *testing.T) 
 }
 
 func TestRunExpansionCycleFlipsStatusEvenWithNoSubscribers(t *testing.T) {
-	pool := setupPool(t)
+	pool := testsupport.SetupPool(t)
 	ctx := context.Background()
-	tenantID := createTenant(t, pool)
-	createEndpoint(t, pool, tenantID, []string{"payment.failed"}, "") // not subscribed to order.created
+	tenantID, _ := testsupport.CreateTenant(t, pool)
+	testsupport.CreateEndpoint(t, pool, tenantID, []string{"payment.failed"}, "") // not subscribed to order.created
 	eventID := publishEvent(t, pool, tenantID, "order.created", "key-2")
 
 	did, err := worker.RunExpansionCycle(ctx, pool)
@@ -57,10 +58,10 @@ func TestRunExpansionCycleFlipsStatusEvenWithNoSubscribers(t *testing.T) {
 }
 
 func TestRunExpansionCycleExpandsInPublishOrderAcrossSeparateCalls(t *testing.T) {
-	pool := setupPool(t)
+	pool := testsupport.SetupPool(t)
 	ctx := context.Background()
-	tenantID := createTenant(t, pool)
-	endpointID := createEndpoint(t, pool, tenantID, []string{"order.created"}, "")
+	tenantID, _ := testsupport.CreateTenant(t, pool)
+	endpointID := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "")
 	firstEventID := publishEvent(t, pool, tenantID, "order.created", "seq-key-1")
 	secondEventID := publishEvent(t, pool, tenantID, "order.created", "seq-key-2")
 
@@ -83,11 +84,11 @@ func TestRunExpansionCycleExpandsInPublishOrderAcrossSeparateCalls(t *testing.T)
 }
 
 func TestRunExpansionCycleQueuesDeliveriesForPausedAndHaltedEndpoints(t *testing.T) {
-	pool := setupPool(t)
+	pool := testsupport.SetupPool(t)
 	ctx := context.Background()
-	tenantID := createTenant(t, pool)
-	pausedEndpoint := createEndpoint(t, pool, tenantID, []string{"order.created"}, "paused")
-	haltedEndpoint := createEndpoint(t, pool, tenantID, []string{"order.created"}, "halted")
+	tenantID, _ := testsupport.CreateTenant(t, pool)
+	pausedEndpoint := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "paused")
+	haltedEndpoint := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "halted")
 	eventID := publishEvent(t, pool, tenantID, "order.created", "key-status-test")
 
 	did, err := worker.RunExpansionCycle(ctx, pool)
@@ -106,7 +107,7 @@ func TestRunExpansionCycleQueuesDeliveriesForPausedAndHaltedEndpoints(t *testing
 }
 
 func TestRunExpansionCycleReturnsFalseWhenNothingToDo(t *testing.T) {
-	pool := setupPool(t)
+	pool := testsupport.SetupPool(t)
 	ctx := context.Background()
 
 	did, err := worker.RunExpansionCycle(ctx, pool)

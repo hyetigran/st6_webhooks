@@ -34,8 +34,16 @@ func (s *Server) publishEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	// Mirrors node/src/routes/events.ts's z.record(z.unknown()) — payload
 	// must be present and a JSON object, not an array/string/number/null.
-	var asObject map[string]json.RawMessage
-	if len(req.Payload) == 0 || json.Unmarshal(req.Payload, &asObject) != nil {
+	// Unmarshaling into a map specifically does NOT reject `null` (Go
+	// decodes JSON null into a nil map with no error) — decoding into `any`
+	// and type-asserting the result to map[string]any does, since JSON
+	// null becomes a nil interface{}, not a nil map.
+	var decodedPayload any
+	if err := json.Unmarshal(req.Payload, &decodedPayload); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "payload must be an object")
+		return
+	}
+	if _, ok := decodedPayload.(map[string]any); !ok {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "payload must be an object")
 		return
 	}

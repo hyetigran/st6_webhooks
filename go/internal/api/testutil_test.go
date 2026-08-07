@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,40 +14,18 @@ import (
 
 	"webhooks-go/internal/api"
 	"webhooks-go/internal/config"
-	"webhooks-go/internal/crypto"
-	"webhooks-go/internal/db"
-	"webhooks-go/internal/secrets"
+	"webhooks-go/internal/testsupport"
 )
-
-// Isolated Go-stack test database (go/README.md), separate from Node's
-// webhooks_node_test on port 5532. Sequential by construction (no
-// t.Parallel() calls) — every test truncates shared tables, same reason
-// node/vitest.config.ts disables fileParallelism.
-const testDatabaseURL = "postgres://webhooks:webhooks@localhost:5533/webhooks_go_test"
 
 // 32 raw bytes — AES-256-GCM's exact key length. Test-only; production reads
 // this from SECRET_ENCRYPTION_KEY via config.SecretEncryptionKey().
 var testSecretKey = []byte("abcdefghijklmnopqrstuvwxyz012345")
 
-var migrateOnce sync.Once
-
-func setupPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	ctx := context.Background()
-
-	pool, err := db.NewPool(ctx, testDatabaseURL)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-
-	migrateOnce.Do(func() {
-		require.NoError(t, db.Migrate(ctx, pool))
-	})
-
-	_, err = pool.Exec(ctx, "TRUNCATE tenants, endpoints, events, deliveries, attempts, replays RESTART IDENTITY CASCADE")
-	require.NoError(t, err)
-
-	return pool
-}
+var (
+	setupPool      = testsupport.SetupPool
+	createTenant   = testsupport.CreateTenant
+	createEndpoint = testsupport.CreateEndpoint
+)
 
 func newTestServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	t.Helper()
@@ -56,32 +33,6 @@ func newTestServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
-}
-
-func createTenant(t *testing.T, pool *pgxpool.Pool) (id, apiKey string) {
-	t.Helper()
-	apiKey = secrets.Generate("tenant")
-	err := pool.QueryRow(context.Background(),
-		`INSERT INTO tenants (name, api_key_hash) VALUES ('test-tenant', $1) RETURNING id`,
-		crypto.HashAPIKey(apiKey),
-	).Scan(&id)
-	require.NoError(t, err)
-	return id, apiKey
-}
-
-// createEndpoint bypasses the API (direct insert) for fixtures that need an
-// endpoint to already exist before the behavior under test runs.
-func createEndpoint(t *testing.T, pool *pgxpool.Pool, tenantID string) string {
-	t.Helper()
-	var id string
-	err := pool.QueryRow(context.Background(),
-		`INSERT INTO endpoints (tenant_id, url, event_types, signing_secret)
-		 VALUES ($1, 'https://example.com/hook', ARRAY['order.created'], 'encrypted-placeholder')
-		 RETURNING id`,
-		tenantID,
-	).Scan(&id)
-	require.NoError(t, err)
-	return id
 }
 
 // createDelivery inserts a delivery row directly (an event is required by
