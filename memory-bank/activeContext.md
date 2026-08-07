@@ -6,37 +6,39 @@ issue #1) and `git log`, then fix this file.
 
 ## Current phase
 
-**The Node track is done.** The Go track has four tickets done: `#22` (schema/scaffolding/
-endpoint API), `#23` (publish & async expansion), `#24` (delivery worker), `#25` (replay) — `go/`
-now has a working publish → expand → deliver → replay pipeline with a real concurrent worker
-pool. Tickets `#26`-`#27` (visibility & read API, test suite & deployment) are not yet built. The
+**The Node track is done.** The Go track has five tickets done: `#22` (schema/scaffolding/
+endpoint API), `#23` (publish & async expansion), `#24` (delivery worker), `#25` (replay), `#26`
+(visibility & read API) — `go/` now has the full REST surface plus the async pipeline, all
+verified live. Only `#27` (test suite & deployment) remains before Go matches Node's scope. The
 frontend (`#28-30`) hasn't started.
 
 ## What just happened (most recent session)
 
-- **`#25` — [Go] Replay built and merged** (MR !10, branch `25-go-replay`, off an up-to-date
-  `main` after `#24`'s MR !9). Same async two-phase shape as publish (`docs/adr/0005`) — full
-  mechanism detail lives in `progress.md`'s "What works," not repeated here.
-  - Built `POST /endpoints/{id}/replays` and `internal/worker.RunReplayExpansionCycle`, ported
-    from Node's already-reviewed `replays.ts`/`replayExpansion.ts`.
-  - Verified: 12 new tests green on first run against real Postgres, plus a live e2e replay
-    against a real external receiver — see `progress.md`'s "What works" for what that proved.
-  - `/code-review` found and fixed a real REST-surface divergence: Go's `time.Parse` accepted
-    non-UTC timezone offsets (e.g. `+01:00`) that Node's `z.string().datetime()` rejects by
-    default — fixed with an explicit `Z`-suffix check, regression-tested. Also fixed a
-    misleadingly-named variable and a missing rollback-safety comment.
+- **`#26` — [Go] Visibility & read API built and merged** (MR !11, branch
+  `26-go-visibility-read-api`, off an up-to-date `main` after `#25`'s MR !10). Full mechanism
+  detail lives in `progress.md`'s "What works," not repeated here.
+  - Built the four read routes (`GET /events`, `GET /events/:id`, `GET /deliveries/:id`,
+    `GET /endpoints/:id/deliveries`) plus a new `internal/api/delivery_queries.go`, ported from
+    Node's already-reviewed `events.ts`/`deliveries.ts`/`deliveryQueries.ts`.
+  - Verified: 23 new tests green on first run against real Postgres, plus a live e2e read-API
+    pass against postman-echo.com — see `progress.md`'s "What works" for what that proved.
+  - `/code-review`'s Spec axis found **zero issues** — reported as a faithful port, including the
+    three highest-risk areas (queue-view pagination direction, attempts-cap-keeps-most-recent,
+    EXISTS-not-JOIN for the endpoint filter) all independently verified correct. Standards axis
+    fixed dead code, missing doc comments, a cursor validity guard, and reconciled a
+    query-building style inconsistency within the package (see `progress.md`'s gotchas).
 
 ## Next steps
 
-- `#26`-`#27` — [Go] Visibility & read API, Test suite & deployment (mirror Node's `#20`-`#21`).
-  `#27` must build the identical PRD §8 acceptance suite shape Node's `#21` established (`make
-  test`/`properties`/`chaos`/`load`/`verify`, real spawned processes/signals for chaos, real
-  spawned api/worker for load) — Go's process-signal handling will differ from Node's `tsx`-
-  wrapper gotcha (see `progress.md`), but needs its own equivalent verification. With `#24`'s
-  goroutine pool real, Go's `make load` results should be genuinely comparable to Node's on
-  multi-core behavior, not just a coincidence of matching architecture.
+- `#27` — [Go] Test suite & deployment (mirrors Node's `#21`, the last Go ticket) — must build
+  the identical PRD §8 acceptance suite shape Node established (`make test`/`properties`/`chaos`/
+  `load`/`verify`, real spawned processes/signals for chaos, real spawned api/worker for load).
+  Go's process-signal handling will differ from Node's `tsx`-wrapper gotcha (see `progress.md`),
+  but needs its own equivalent verification. With `#24`'s goroutine pool real, Go's `make load`
+  results should be genuinely comparable to Node's on multi-core behavior, not just a coincidence
+  of matching architecture.
 - `#28` — Frontend: API client & endpoint management UI (buildable now against either backend's
-  fixed REST contract).
+  fixed REST contract — both are essentially feature-complete now).
 - **Primary-build designation** (ticket `#14`'s decision) still needs Go's full `make load`
   result once `#27` exists, to compare against Node's baseline in `evidence/load/`.
 
@@ -45,8 +47,8 @@ frontend (`#28-30`) hasn't started.
 - **C-2 (time spent) still needs the user's input** — flagged in `REVIEW.md`, not answered.
 - Timebox: building two full implementations was a deliberate scope choice, with an explicit
   accepted fallback written into `DECISIONS.md`'s Submission section (ship Node alone if Go isn't
-  at parity by the timebox's midpoint). Go now has four tickets done — worth revisiting this
-  checkpoint once `#26`-`#27` land.
+  at parity by the timebox's midpoint). Go now has five tickets done, one (`#27`) from parity with
+  Node's full scope — worth revisiting this checkpoint once `#27` lands.
 - The Go unit/integration test suite (`go test`, real Postgres) deliberately does **not** yet
   cover real multi-worker concurrency races — same deferral Node made until its own `#21`'s chaos
   suite; Go's `#27` will need the equivalent (and now has a real multi-goroutine worker to

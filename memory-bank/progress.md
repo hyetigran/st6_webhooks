@@ -100,6 +100,17 @@ not a replacement for it.
   via `deliveries.seq`. Wired into `go/cmd/worker`'s poll loop. Live-verified: replayed a real
   previously-delivered event (postman-echo.com) through the actual running worker, watched a
   fresh delivery row get created and successfully redelivered.
+- **Go — visibility & read API** (`#26`): `GET /events` (R-24 search: id/type/from/to/
+  endpoint_id filters via EXISTS-through-deliveries, cursor-paginated), `GET /events/:id`
+  (fan-out), `GET /deliveries/:id` (R-23: `blocked_on_delivery_id` computed read-time from the
+  endpoint's current head, attempts capped at 6 keeping the most recent, `last_response`),
+  `GET /endpoints/:id/deliveries` (queue view, ascending by `seq`, its own `after` cursor per
+  `docs/adr/0007`). R-25's health fields were already done in `#22`. New
+  `internal/api/delivery_queries.go` (`headDeliverySelect`/`computeBlockedOnDeliveryID`/
+  `serializeDeliverySummary`) shared between the two blocked-computation routes, mirroring
+  Node's `deliveryQueries.ts`. Live-verified: registered, published, delivered a real event to
+  postman-echo.com, exercised all four routes against real data — the actual echoed HMAC
+  headers appear correctly in `last_response`/`attempts`.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -116,10 +127,10 @@ Compose deployment. Node is done.
 
 ## What doesn't exist yet
 
-- **Go**: `#22`-`#25` (schema/scaffolding/endpoint API, publish & async expansion, delivery
-  worker, replay) are done — see "What works" above. `#26`-`#27` (visibility & read API, test
-  suite & deployment) are not yet built, mirroring Node ticket-for-ticket including every
-  review-driven fix, not the pre-review design. Go's own "Test suite & deployment" ticket (`#27`)
+- **Go**: `#22`-`#26` (schema/scaffolding/endpoint API, publish & async expansion, delivery
+  worker, replay, visibility & read API) are done — see "What works" above. Only `#27` (test
+  suite & deployment) remains, mirroring Node ticket-for-ticket including every review-driven
+  fix, not the pre-review design. Go's own "Test suite & deployment" ticket (`#27`)
   must build the identical PRD §8 suite — see this file's own `#21` entry above ("What works")
   for the full shape Node established (`make test`/`properties`/`chaos`/`load`/`verify`, real
   spawned processes/signals for chaos, real spawned api/worker for load).
@@ -267,3 +278,11 @@ Compose deployment. Node is done.
   `events.ts` doesn't schema-validate at all (passed straight through as query strings into a SQL
   comparison), so there's no Zod behavior to match there — but any *body* field parsed the same
   way as replay's `range_start`/`range_end` needs this same explicit `Z`-suffix check.
+- **Go's dynamic-WHERE-clause routes should build the query string by direct accumulation
+  (`query += fmt.Sprintf(" AND ...", ...)`), not a `conditions []string` + `strings.Join` slice**
+  — the latter mirrors Node's own shape (`node/src/routes/events.ts`'s `conditions` array) closely
+  enough to be tempting when porting a route, but it's a second WHERE-building idiom alongside the
+  accumulation style `listEndpoints`/`listEndpointDeliveries` already established, and having two
+  idioms for the same kind of task in one package is its own (mild) inconsistency — caught by
+  `/code-review` on `#26`'s `listEvents`. Default to the accumulation style for any new Go route
+  with optional filters, even when porting from a Node route that uses the array-join shape.
