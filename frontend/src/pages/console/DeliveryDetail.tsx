@@ -3,16 +3,20 @@ import { Link, useParams } from "react-router-dom";
 import { useApiClient } from "../../api/useApiClient";
 import { useBackend } from "../../lib/backend";
 import { Badge } from "../../design/Badge";
+import { Breadcrumb } from "../../design/Breadcrumb";
 import { Card } from "../../design/Card";
+import { Field } from "../../design/Field";
 import "../../design/Table.css";
-import { formatDateTime, formatRelativeTime } from "../../lib/format";
+import { deliveryTone, nextAttemptDisplay } from "../../lib/deliveryDisplay";
+import { formatDateTime } from "../../lib/format";
 import type { DeliveryState } from "../../api/types";
 
-function deliveryTone(state: DeliveryState): "neutral" | "accent" | "danger" {
-  if (state === "failed") return "danger";
-  if (state === "in_flight" || state === "succeeded") return "accent";
-  return "neutral";
-}
+// Not returned by GET /deliveries/:id — matches the backend's documented
+// default (BACKOFF_MAX_ATTEMPTS / config.backoff.maxAttempts), but the
+// read API doesn't expose the configured value, so this can silently
+// drift if a deployment overrides it. Named here rather than left as a
+// bare literal so that gap is visible, not hidden.
+const DEFAULT_MAX_ATTEMPTS = 6;
 
 function outstandingReason(state: DeliveryState, blockedOnDeliveryId: string | null): string | null {
   if (state === "succeeded") return null;
@@ -43,10 +47,10 @@ export function DeliveryDetail() {
 
       {data && (
         <>
-          <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 8 }}>
+          <Breadcrumb>
             <Link to={`/console/events/${data.event_id}`}>Event {data.event_id}</Link> /{" "}
             <Link to={`/console/endpoints/${data.endpoint_id}`}>Endpoint queue</Link>
-          </p>
+          </Breadcrumb>
 
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
             <h1 style={{ fontSize: 24 }} className="app-mono">
@@ -60,11 +64,8 @@ export function DeliveryDetail() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
             <Field label="Event ID" value={data.event_id} mono />
             <Field label="Endpoint ID" value={data.endpoint_id} mono />
-            <Field label="Attempts" value={`${data.attempt_count} of 6`} />
-            <Field
-              label="Next attempt"
-              value={data.state === "pending" || data.state === "in_flight" ? formatRelativeTime(data.next_attempt_at) : "—"}
-            />
+            <Field label="Attempts" value={`${data.attempt_count} of ${DEFAULT_MAX_ATTEMPTS}`} />
+            <Field label="Next attempt" value={nextAttemptDisplay(data.state, data.next_attempt_at)} />
           </div>
 
           {data.blocked_on_delivery_id && (
@@ -135,19 +136,6 @@ export function DeliveryDetail() {
           )}
         </>
       )}
-    </div>
-  );
-}
-
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div>
-      <div style={{ fontSize: 11, letterSpacing: 0.4, textTransform: "uppercase", color: "var(--color-text-muted)" }}>
-        {label}
-      </div>
-      <div className={mono ? "app-mono" : undefined} style={{ fontSize: 14 }}>
-        {value}
-      </div>
     </div>
   );
 }

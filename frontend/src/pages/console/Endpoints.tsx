@@ -10,7 +10,7 @@ import { Card } from "../../design/Card";
 import { Modal } from "../../design/Modal";
 import "../../design/Table.css";
 import { formatPercent, formatRelativeTime } from "../../lib/format";
-import { RevealedSecretModal, ResumeDisclosureModal } from "./EndpointActionModals";
+import { ActionErrorBanner, RevealedSecretModal, ResumeDisclosureModal } from "./EndpointActionModals";
 import { useEndpointActions } from "./useEndpointActions";
 
 export function Endpoints() {
@@ -39,7 +39,7 @@ export function Endpoints() {
     setResumeDisclosure,
     actionError,
     setActionError,
-  } = useEndpointActions(queryKey);
+  } = useEndpointActions([queryKey]);
 
   const registerMutation = useMutation({
     mutationFn: (input: { url: string; event_types: string[] }) => client!.registerEndpoint(input),
@@ -63,17 +63,7 @@ export function Endpoints() {
 
       {isLoading && <p>Loading…</p>}
       {isError && <p style={{ color: "var(--color-danger)" }}>Failed to load endpoints: {(error as Error).message}</p>}
-      {actionError && (
-        <p style={{ color: "var(--color-danger)" }}>
-          {actionError}{" "}
-          <button
-            onClick={() => setActionError(null)}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-accent-700)", padding: 0 }}
-          >
-            Dismiss
-          </button>
-        </p>
-      )}
+      {actionError && <ActionErrorBanner message={actionError} onDismiss={() => setActionError(null)} />}
 
       {data && data.endpoints.length === 0 && (
         <Card>

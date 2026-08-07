@@ -7,11 +7,15 @@ export type RevealedSecret = { url: string; secret: string; overlapExpiresAt?: s
 
 /** Shared pause/resume/rotate-secret mutations and their result/error UI
  * state — used by both the endpoints list (Endpoints.tsx) and the single-
- * endpoint queue view (EndpointDetail.tsx), so this logic exists once. */
-export function useEndpointActions(queryKey: QueryKey) {
+ * endpoint queue view (EndpointDetail.tsx), so this logic exists once.
+ * Takes every query an action can invalidate — EndpointDetail.tsx passes
+ * both the endpoint's own query and its deliveries-queue query, since a
+ * resume/pause changes what the queue table should show too, not just the
+ * endpoint's status badge. */
+export function useEndpointActions(queryKeys: QueryKey[]) {
   const client = useApiClient();
   const queryClient = useQueryClient();
-  const invalidate = () => queryClient.invalidateQueries({ queryKey });
+  const invalidate = () => queryKeys.forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
 
   const [revealedSecret, setRevealedSecret] = useState<RevealedSecret | null>(null);
   const [resumeDisclosure, setResumeDisclosure] = useState<ResumeEndpointResponse | null>(null);

@@ -3,16 +3,12 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useApiClient } from "../../api/useApiClient";
 import { useBackend } from "../../lib/backend";
 import { Badge } from "../../design/Badge";
+import { Breadcrumb } from "../../design/Breadcrumb";
 import { Card } from "../../design/Card";
+import { Field } from "../../design/Field";
 import "../../design/Table.css";
-import { formatDateTime, formatRelativeTime } from "../../lib/format";
-import type { DeliveryState } from "../../api/types";
-
-function deliveryTone(state: DeliveryState): "neutral" | "accent" | "danger" {
-  if (state === "failed") return "danger";
-  if (state === "in_flight" || state === "succeeded") return "accent";
-  return "neutral";
-}
+import { deliveryTone, nextAttemptDisplay } from "../../lib/deliveryDisplay";
+import { formatDateTime } from "../../lib/format";
 
 export function EventDetail() {
   const { id } = useParams<{ id: string }>();
@@ -31,9 +27,9 @@ export function EventDetail() {
 
   return (
     <div>
-      <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 8 }}>
+      <Breadcrumb>
         <Link to="/console/events">Events</Link> / <span className="app-mono">{id}</span>
-      </p>
+      </Breadcrumb>
 
       {isLoading && <p>Loading…</p>}
       {isError && <p style={{ color: "var(--color-danger)" }}>Failed to load event: {(error as Error).message}</p>}
@@ -94,7 +90,7 @@ export function EventDetail() {
                         <Badge tone={deliveryTone(d.state)}>{d.state}</Badge>
                       </td>
                       <td>{d.attempt_count}</td>
-                      <td>{d.state === "pending" || d.state === "in_flight" ? formatRelativeTime(d.next_attempt_at) : "—"}</td>
+                      <td>{nextAttemptDisplay(d.state, d.next_attempt_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -103,19 +99,6 @@ export function EventDetail() {
           )}
         </>
       )}
-    </div>
-  );
-}
-
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div>
-      <div style={{ fontSize: 11, letterSpacing: 0.4, textTransform: "uppercase", color: "var(--color-text-muted)" }}>
-        {label}
-      </div>
-      <div className={mono ? "app-mono" : undefined} style={{ fontSize: 14 }}>
-        {value}
-      </div>
     </div>
   );
 }

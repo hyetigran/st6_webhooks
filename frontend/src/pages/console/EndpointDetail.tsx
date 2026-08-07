@@ -3,77 +3,61 @@ import { Link, useParams } from "react-router-dom";
 import { useApiClient } from "../../api/useApiClient";
 import { useBackend } from "../../lib/backend";
 import { Badge } from "../../design/Badge";
+import { Breadcrumb } from "../../design/Breadcrumb";
 import { Button } from "../../design/Button";
 import { Card } from "../../design/Card";
+import { Field } from "../../design/Field";
 import "../../design/Table.css";
+import { deliveryTone, nextAttemptDisplay } from "../../lib/deliveryDisplay";
 import { formatDateTime, formatPercent, formatRelativeTime } from "../../lib/format";
-import { RevealedSecretModal, ResumeDisclosureModal } from "./EndpointActionModals";
+import { ActionErrorBanner, RevealedSecretModal } from "./EndpointActionModals";
 import { useEndpointActions } from "./useEndpointActions";
-import type { DeliveryState } from "../../api/types";
-
-function deliveryTone(state: DeliveryState): "neutral" | "accent" | "danger" {
-  if (state === "failed") return "danger";
-  if (state === "in_flight" || state === "succeeded") return "accent";
-  return "neutral";
-}
 
 export function EndpointDetail() {
   const { id } = useParams<{ id: string }>();
   const client = useApiClient();
   const { backend } = useBackend();
 
+  const endpointQueryKey = ["endpoints", backend.id, id];
+  const queueQueryKey = ["endpoint-deliveries", backend.id, id];
+
   const endpointQuery = useQuery({
-    queryKey: ["endpoints", backend.id, id],
+    queryKey: endpointQueryKey,
     queryFn: () => client!.getEndpoint(id!),
     enabled: client !== null && !!id,
     refetchInterval: 3000,
   });
 
   const queueQuery = useQuery({
-    queryKey: ["endpoint-deliveries", backend.id, id],
+    queryKey: queueQueryKey,
     queryFn: () => client!.listEndpointDeliveries(id!, { limit: 50 }),
     enabled: client !== null && !!id,
     refetchInterval: 3000,
   });
 
-  const {
-    pauseMutation,
-    resumeMutation,
-    rotateMutation,
-    revealedSecret,
-    setRevealedSecret,
-    resumeDisclosure,
-    setResumeDisclosure,
-    actionError,
-    setActionError,
-  } = useEndpointActions(["endpoints", backend.id, id]);
+  // Resume isn't wired in here — the interactive resume flow with its R-14
+  // ordering-consequence disclosure, alongside this queue view, is #30's
+  // scope. Pause/rotate are kept as basic endpoint-management parity with
+  // the endpoints list (#28).
+  const { pauseMutation, rotateMutation, revealedSecret, setRevealedSecret, actionError, setActionError } =
+    useEndpointActions([endpointQueryKey, queueQueryKey]);
 
   if (!client) return null;
   const endpoint = endpointQuery.data;
   const queue = queueQuery.data;
-  const busy = pauseMutation.isPending || resumeMutation.isPending || rotateMutation.isPending;
+  const busy = pauseMutation.isPending || rotateMutation.isPending;
 
   return (
     <div>
-      <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 8 }}>
+      <Breadcrumb>
         <Link to="/console/endpoints">Endpoints</Link>
-      </p>
+      </Breadcrumb>
 
       {endpointQuery.isLoading && <p>Loading…</p>}
       {endpointQuery.isError && (
         <p style={{ color: "var(--color-danger)" }}>Failed to load endpoint: {(endpointQuery.error as Error).message}</p>
       )}
-      {actionError && (
-        <p style={{ color: "var(--color-danger)" }}>
-          {actionError}{" "}
-          <button
-            onClick={() => setActionError(null)}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-accent-700)", padding: 0 }}
-          >
-            Dismiss
-          </button>
-        </p>
-      )}
+      {actionError && <ActionErrorBanner message={actionError} onDismiss={() => setActionError(null)} />}
 
       {endpoint && (
         <>
@@ -85,13 +69,9 @@ export function EndpointDetail() {
               </Badge>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              {endpoint.status === "active" ? (
+              {endpoint.status === "active" && (
                 <Button disabled={busy} onClick={() => pauseMutation.mutate(endpoint.id)}>
                   Pause
-                </Button>
-              ) : (
-                <Button disabled={busy} onClick={() => resumeMutation.mutate(endpoint.id)}>
-                  Resume…
                 </Button>
               )}
               <Button disabled={busy} onClick={() => rotateMutation.mutate({ id: endpoint.id, url: endpoint.url })}>
@@ -107,9 +87,9 @@ export function EndpointDetail() {
             <Card style={{ marginBottom: 20, borderColor: "var(--color-danger)" }}>
               <h3 style={{ fontSize: 13, marginBottom: 8, color: "var(--color-danger)" }}>HALTED AT THE ATTEMPT CEILING</h3>
               <p style={{ fontSize: 13, margin: 0 }}>
-                The head delivery exhausted its attempts, so this endpoint halted and everything behind it reports
-                Blocked. Nothing was discarded — resume to skip the failed head and drain the rest, or replay to retry
-                past events without disturbing the live queue.
+                The head delivery (highlighted below) exhausted its attempts, so this endpoint halted and everything
+                behind it reports Blocked. Nothing was discarded — resume from the endpoints list to skip the failed
+                head and drain the rest, or replay to retry past events without disturbing the live queue.
               </p>
             </Card>
           )}
@@ -142,49 +122,47 @@ export function EndpointDetail() {
               </tr>
             </thead>
             <tbody>
-              {queue.deliveries.map((d, i) => (
-                <tr key={d.id}>
-                  <td>{String(i + 1).padStart(2, "0")}</td>
-                  <td>
-                    <Link to={`/console/deliveries/${d.id}`} className="app-mono">
-                      {d.id}
-                    </Link>
-                  </td>
-                  <td>
-                    <Badge tone={deliveryTone(d.state)}>{d.state}</Badge>
-                    {d.blocked_on_delivery_id && (
-                      <span style={{ fontSize: 12, color: "var(--color-text-muted)", marginLeft: 8 }}>
-                        blocked on{" "}
-                        <Link to={`/console/deliveries/${d.blocked_on_delivery_id}`} className="app-mono">
-                          {d.blocked_on_delivery_id}
-                        </Link>
-                      </span>
-                    )}
-                    {i === 0 && (
-                      <span style={{ fontSize: 12, color: "var(--color-text-muted)", marginLeft: 8 }}>head of queue</span>
-                    )}
-                  </td>
-                  <td>{d.state === "pending" || d.state === "in_flight" ? formatRelativeTime(d.next_attempt_at) : "—"}</td>
-                </tr>
-              ))}
+              {queue.deliveries.map((d, i) => {
+                const isHead = i === 0;
+                // "the head highlighted when halted" (PRD §7) — the head
+                // is always labelled, but only gets a visual highlight
+                // when it's actually the reason everything behind it is
+                // stuck (i.e. the endpoint has halted on it).
+                const highlight = isHead && endpoint?.status === "halted";
+                return (
+                  <tr key={d.id} style={highlight ? { background: "var(--color-accent-100)" } : undefined}>
+                    <td>{String(i + 1).padStart(2, "0")}</td>
+                    <td>
+                      <Link to={`/console/deliveries/${d.id}`} className="app-mono">
+                        {d.id}
+                      </Link>
+                    </td>
+                    <td>
+                      <Badge tone={deliveryTone(d.state)}>{d.state}</Badge>
+                      {isHead && (
+                        <span style={{ fontSize: 12, fontWeight: highlight ? 600 : 400, marginLeft: 8 }}>
+                          head of queue
+                        </span>
+                      )}
+                      {d.blocked_on_delivery_id && (
+                        <span style={{ fontSize: 12, color: "var(--color-text-muted)", marginLeft: 8 }}>
+                          blocked on{" "}
+                          <Link to={`/console/deliveries/${d.blocked_on_delivery_id}`} className="app-mono">
+                            {d.blocked_on_delivery_id}
+                          </Link>
+                        </span>
+                      )}
+                    </td>
+                    <td>{nextAttemptDisplay(d.state, d.next_attempt_at)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </Card>
       )}
 
       {revealedSecret && <RevealedSecretModal secret={revealedSecret} onClose={() => setRevealedSecret(null)} />}
-      {resumeDisclosure && <ResumeDisclosureModal result={resumeDisclosure} onClose={() => setResumeDisclosure(null)} />}
-    </div>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div style={{ fontSize: 11, letterSpacing: 0.4, textTransform: "uppercase", color: "var(--color-text-muted)" }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 14 }}>{value}</div>
     </div>
   );
 }

@@ -52,3 +52,17 @@ export function ResumeDisclosureModal({ result, onClose }: { result: ResumeEndpo
     </Modal>
   );
 }
+
+export function ActionErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <p style={{ color: "var(--color-danger)" }}>
+      {message}{" "}
+      <button
+        onClick={onDismiss}
+        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-accent-700)", padding: 0 }}
+      >
+        Dismiss
+      </button>
+    </p>
+  );
+}
