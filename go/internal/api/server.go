@@ -54,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /endpoints/{id}/pause", s.pauseEndpoint)
 	protected.HandleFunc("POST /endpoints/{id}/resume", s.resumeEndpoint)
 	protected.HandleFunc("POST /endpoints/{id}/secret/rotate", s.rotateSecret)
+	protected.HandleFunc("POST /events", s.publishEvent)
 	protected.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "Not found")
 	})
