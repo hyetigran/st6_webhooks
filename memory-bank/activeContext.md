@@ -32,19 +32,10 @@ frontend (`#28-30`) hasn't started.
     `node/src/worker.ts`'s poll loop shape (try every cycle, sleep only when none found work).
     Currently just expansion — delivery (`#24`) and replay expansion (`#25`) join the same loop
     as their tickets land.
-  - **A real cross-package test flake found and fixed**: `internal/api` and `internal/worker`
-    both `TRUNCATE` the same shared `webhooks_go_test` database in their fixtures, and `go test
-    ./...`'s default *cross-package* parallelism (distinct from within-package test ordering,
-    which was already safe) let one package's `TRUNCATE` race another's just-inserted rows —
-    the same class of problem `node/vitest.config.ts`'s `fileParallelism: false` exists to
-    prevent. Fixed with `go test -p 1 ./...`, wired into a new `go/Makefile`'s `test` target so
-    it's the default rather than a footgun for the next `go test ./...` run.
-  - **`/code-review` (Standards + Spec axes) independently found the same real bug**, fixed and
-    regression-tested: `payload: null` bypassed validation. `json.Unmarshal` into a `map[string]T`
-    treats JSON `null` as "no error, nil map" rather than rejecting it, so `{"payload": null}`
-    silently passed and got persisted — diverging from Node's `z.record(z.unknown())`, which
-    correctly rejects `null`. Fixed by decoding into `any` first and type-asserting the result to
-    `map[string]any`, which *does* distinguish `null` (a nil interface) from an object.
+  - **Two real bugs found and fixed** — full mechanism/fix detail lives in `progress.md`'s
+    gotchas section, not repeated here: a cross-package `go test` parallelism flake (`internal/
+    api`/`internal/worker` share one Postgres test database), and `/code-review` independently
+    catching `payload: null` bypassing validation via a `json.Unmarshal`-into-map quirk.
   - Standards axis also flagged (fixed): test-fixture duplication between `internal/api` and
     `internal/worker`'s test packages (`setupPool`/`createTenant`/`createEndpoint`) — extracted
     into a new `internal/testsupport` package, imported only from `*_test.go` files so

@@ -77,14 +77,10 @@ not a replacement for it.
   `internal/worker.RunExpansionCycle` (per-tenant `pg_try_advisory_xact_lock` serialization per
   `docs/adr/0001`, correcting the ticket's stale `FOR UPDATE SKIP LOCKED` wording the same way
   Node's `#17` did). New `go/cmd/worker` poll-loop entrypoint (mirrors `node/src/worker.ts`;
-  currently just expansion). `go/Makefile` added (`typecheck`/`build`/`test`, the latter running
-  `go test -p 1 ./...` — required, since Go packages' tests share one Postgres database and
-  default cross-package parallelism flakes otherwise, a real bug found while verifying this
-  ticket). `internal/testsupport` holds fixtures shared across `internal/api`/`internal/worker`'s
-  test packages. `/code-review` found and fixed a real bug: `payload: null` bypassed validation
-  (`json.Unmarshal` into a map silently accepts JSON `null`; fixed by decoding into `any` and
-  type-asserting to `map[string]any`). Live-verified end to end with real spawned API + worker
-  processes.
+  currently just expansion) and `go/Makefile` (`typecheck`/`build`/`test`). `internal/testsupport`
+  holds fixtures shared across `internal/api`/`internal/worker`'s test packages. Two real bugs
+  found and fixed during this ticket — see the gotchas section below for both. Live-verified end
+  to end with real spawned API + worker processes.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
