@@ -1,0 +1,8 @@
+{
+  "durationMs": 2184,
+  "finalState": "succeeded",
+  "receiverHits": 2,
+  "scenario": "crash-after-successful-send",
+  "status": "pass",
+  "timestamp": "2026-08-07T07:00:15Z"
+}

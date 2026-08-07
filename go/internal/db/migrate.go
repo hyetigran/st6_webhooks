@@ -18,11 +18,39 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+// migrationLockKey is an arbitrary fixed key for the session-level advisory
+// lock Migrate holds for its duration — docker-compose's api and worker
+// services each run their own `./migrate` on startup, and without this lock
+// two of them racing "CREATE TABLE IF NOT EXISTS schema_migrations" against
+// a fresh database can both pass the existence check before either commits,
+// then collide creating the table's implicit composite type (Postgres
+// error 23505 on pg_type_typname_nsp_index) — a real failure observed when
+// live-verifying `docker compose up`, not a hypothetical.
+const migrationLockKey = "webhooks_go_migrations"
+
 // Migrate mirrors node/src/db/migrate.ts: a schema_migrations table tracks
 // applied filenames, each unapplied migration runs in its own transaction,
-// files apply in sorted-filename order.
+// files apply in sorted-filename order. Serialized across concurrent
+// callers via a single held connection's advisory lock.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	if _, err := pool.Exec(ctx, `
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("db: acquire connection for migration lock: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(hashtext($1))", migrationLockKey); err != nil {
+		return fmt.Errorf("db: acquire migration lock: %w", err)
+	}
+	// Explicit unlock (not just letting the connection return to the pool)
+	// — pg_advisory_lock is session-scoped, so an unreleased lock would
+	// stay held by this connection for as long as it sits in the pool,
+	// blocking any later migration attempt from ever acquiring it.
+	defer func() {
+		_, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock(hashtext($1))", migrationLockKey)
+	}()
+
+	if _, err := conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			filename    TEXT PRIMARY KEY,
 			applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -43,7 +71,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	sort.Strings(files)
 
-	rows, err := pool.Query(ctx, "SELECT filename FROM schema_migrations")
+	rows, err := conn.Query(ctx, "SELECT filename FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("db: query applied migrations: %w", err)
 	}
@@ -71,7 +99,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 
 		log.Printf("Applying migration %s...", file)
-		tx, err := pool.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("db: begin tx for %s: %w", file, err)
 		}
