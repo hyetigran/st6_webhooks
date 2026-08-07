@@ -76,6 +76,16 @@ steps") — not a ticket, a decision-application step using data that now exists
   `stage === i` conditional that colors the border — both now come from one check in one render, so they can't disagree.
   Verified live: toggled Implementation/Traffic band/Scenario controls and Play/Pause repeatedly, confirmed the pulse and
   border always land on the same box every time. Committed straight to `main` (`50ca930`) — no ticket/MR.
+- **Pipeline diagram's flowing dot restored, this time properly synced** — the previous fix traded away the actual point of
+  the diagram (a packet flowing through the pipeline, per the mockup) to kill the desync; the user asked for the flow back.
+  Replaced discrete tick-driven `stage` state with a continuous `progress` value (advanced every 60ms) — the dot's position,
+  which box's border is highlighted, and which receiver a lap targets are now all pure derivations of `progress` computed in
+  the same render, so there's no second animation timeline (no CSS transition) for them to drift apart on again. Added static
+  SVG connector lines between boxes (`viewBox="0 0 100 100"` + `preserveAspectRatio="none"` maps 1:1 onto the same left/top
+  percentages the boxes use) so the motion reads as flowing along a wire, closer to the mockup's own canvas-drawn routing. The
+  dot holds still while "at" a receiver rather than flying back to the Publisher — that return trip isn't a real hand-off.
+  Live-verified in Chrome: watched it glide along each leg across multiple ticks, confirmed no disagreement with the
+  highlighted box, confirmed Pause freezes it mid-glide. Committed straight to `main` (`fec90db`) — no ticket/MR.
 
 ## Next steps
 
