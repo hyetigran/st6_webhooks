@@ -1,16 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { useApiClient } from "../../api/useApiClient";
-import type { EndpointWithHealth, RegisterEndpointResponse, ResumeEndpointResponse, RotateSecretResponse } from "../../api/types";
+import type { EndpointWithHealth, RegisterEndpointResponse } from "../../api/types";
 import { useBackend } from "../../lib/backend";
 import { Badge } from "../../design/Badge";
 import { Button } from "../../design/Button";
 import { Card } from "../../design/Card";
 import { Modal } from "../../design/Modal";
 import "../../design/Table.css";
-import { formatDateTime, formatPercent, formatRelativeTime } from "../../lib/format";
-
-type RevealedSecret = { url: string; secret: string; overlapExpiresAt?: string };
+import { formatPercent, formatRelativeTime } from "../../lib/format";
+import { RevealedSecretModal, ResumeDisclosureModal } from "./EndpointActionModals";
+import { useEndpointActions } from "./useEndpointActions";
 
 export function Endpoints() {
   const client = useApiClient();
@@ -19,10 +20,6 @@ export function Endpoints() {
   const queryKey = ["endpoints", backend.id];
 
   const [showRegister, setShowRegister] = useState(false);
-  const [revealedSecret, setRevealedSecret] = useState<RevealedSecret | null>(null);
-  const [resumeDisclosure, setResumeDisclosure] = useState<ResumeEndpointResponse | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const onActionError = (err: unknown) => setActionError(err instanceof Error ? err.message : "Action failed");
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey,
@@ -31,42 +28,27 @@ export function Endpoints() {
     refetchInterval: 3000,
   });
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey });
+  const {
+    pauseMutation,
+    resumeMutation,
+    rotateMutation,
+    busyEndpointId,
+    revealedSecret,
+    setRevealedSecret,
+    resumeDisclosure,
+    setResumeDisclosure,
+    actionError,
+    setActionError,
+  } = useEndpointActions(queryKey);
 
   const registerMutation = useMutation({
     mutationFn: (input: { url: string; event_types: string[] }) => client!.registerEndpoint(input),
     onSuccess: (endpoint: RegisterEndpointResponse) => {
       setShowRegister(false);
       setRevealedSecret({ url: endpoint.url, secret: endpoint.signing_secret });
-      invalidate();
+      queryClient.invalidateQueries({ queryKey });
     },
   });
-
-  const pauseMutation = useMutation({
-    mutationFn: (id: string) => client!.pauseEndpoint(id),
-    onSuccess: invalidate,
-    onError: onActionError,
-  });
-
-  const resumeMutation = useMutation({
-    mutationFn: (id: string) => client!.resumeEndpoint(id),
-    onSuccess: (result: ResumeEndpointResponse) => {
-      setResumeDisclosure(result);
-      invalidate();
-    },
-    onError: onActionError,
-  });
-
-  const rotateMutation = useMutation({
-    mutationFn: (id: string) => client!.rotateSecret(id),
-    onSuccess: (result: RotateSecretResponse, id: string) => {
-      const endpoint = data?.endpoints.find((e) => e.id === id);
-      setRevealedSecret({ url: endpoint?.url ?? id, secret: result.signing_secret, overlapExpiresAt: result.overlap_expires_at });
-    },
-    onError: onActionError,
-  });
-
-  const busyEndpointId = [pauseMutation, resumeMutation, rotateMutation].find((m) => m.isPending)?.variables ?? null;
 
   if (!client) return null;
 
@@ -121,7 +103,7 @@ export function Endpoints() {
                   endpoint={endpoint}
                   onPause={() => pauseMutation.mutate(endpoint.id)}
                   onResume={() => resumeMutation.mutate(endpoint.id)}
-                  onRotate={() => rotateMutation.mutate(endpoint.id)}
+                  onRotate={() => rotateMutation.mutate({ id: endpoint.id, url: endpoint.url })}
                   busy={busyEndpointId === endpoint.id}
                 />
               ))}
@@ -140,51 +122,8 @@ export function Endpoints() {
         </Modal>
       )}
 
-      {revealedSecret && (
-        <Modal onClose={() => setRevealedSecret(null)}>
-          <h2 style={{ fontSize: 18, marginBottom: 8 }}>Signing secret</h2>
-          <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
-            Shown once for <strong>{revealedSecret.url}</strong> — copy it now, it will not be shown again.
-            {revealedSecret.overlapExpiresAt && (
-              <> The previous secret keeps verifying until {formatDateTime(revealedSecret.overlapExpiresAt)}.</>
-            )}
-          </p>
-          <code
-            style={{
-              display: "block",
-              fontFamily: "var(--font-mono)",
-              fontSize: 13,
-              padding: "10px 12px",
-              background: "var(--color-badge-bg)",
-              wordBreak: "break-all",
-              margin: "12px 0",
-            }}
-          >
-            {revealedSecret.secret}
-          </code>
-          <Button variant="primary" onClick={() => setRevealedSecret(null)}>
-            Done
-          </Button>
-        </Modal>
-      )}
-
-      {resumeDisclosure && (
-        <Modal onClose={() => setResumeDisclosure(null)}>
-          <h2 style={{ fontSize: 18, marginBottom: 8 }}>Resumed</h2>
-          <p style={{ fontSize: 13 }}>
-            {resumeDisclosure.pending_delivery_count} deliveries are pending and will drain in publication order.
-          </p>
-          {resumeDisclosure.skipped_failed_delivery_ids.length > 0 && (
-            <p style={{ fontSize: 13, color: "var(--color-danger)" }}>
-              {resumeDisclosure.skipped_failed_delivery_ids.length} previously-failed deliveries are permanently skipped
-              (never retried by resume — only replay would): {resumeDisclosure.skipped_failed_delivery_ids.join(", ")}
-            </p>
-          )}
-          <Button variant="primary" onClick={() => setResumeDisclosure(null)}>
-            Done
-          </Button>
-        </Modal>
-      )}
+      {revealedSecret && <RevealedSecretModal secret={revealedSecret} onClose={() => setRevealedSecret(null)} />}
+      {resumeDisclosure && <ResumeDisclosureModal result={resumeDisclosure} onClose={() => setResumeDisclosure(null)} />}
     </div>
   );
 }
@@ -205,7 +144,9 @@ function EndpointRow({
   return (
     <tr>
       <td>
-        <div style={{ fontWeight: 600 }}>{endpoint.url}</div>
+        <Link to={`/console/endpoints/${endpoint.id}`} style={{ fontWeight: 600, color: "var(--color-text)" }}>
+          {endpoint.url}
+        </Link>
         <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{endpoint.event_types.join(", ")}</div>
       </td>
       <td>

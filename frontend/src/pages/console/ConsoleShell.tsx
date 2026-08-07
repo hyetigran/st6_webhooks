@@ -42,6 +42,9 @@ export function ConsoleShell() {
             <NavLink to="/console/endpoints" style={navLinkStyle}>
               Endpoints
             </NavLink>
+            <NavLink to="/console/events" style={navLinkStyle}>
+              Events
+            </NavLink>
           </nav>
         </div>
 
