@@ -81,6 +81,17 @@ not a replacement for it.
   holds fixtures shared across `internal/api`/`internal/worker`'s test packages. Two real bugs
   found and fixed during this ticket — see the gotchas section below for both. Live-verified end
   to end with real spawned API + worker processes.
+- **Go — delivery worker** (`#24`): the full claim → sign → send → write-back cycle —
+  `internal/worker.ClaimDelivery`/`CompleteDelivery`/`RunDeliveryCycle`, `internal/signing`
+  (HMAC-SHA256 multi-secret), `internal/worker/httpclient.go` (`ResolveAndPin`/
+  `SendOutboundRequest`, pinned-IP dialing, connect/total timeout classification, per-host
+  connection cap). Same mechanisms as Node's `#18`, including the R-11 head-fetch-unconditionally
+  fix carried over exactly (see gotchas below). `go/cmd/worker` runs a real goroutine pool
+  (`WORKER_POOL_SIZE`, default `runtime.NumCPU()`) — every claim/complete/expansion query was
+  already safe under concurrent execution, so goroutines just share one `pgxpool.Pool` and one
+  `*http.Transport` with no extra coordination. Live-verified: real delivery to httpbin.org, and a
+  concurrency check (5 endpoints × 5 events, multiple simultaneous `in_flight` deliveries observed
+  mid-run — real parallelism).
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -97,11 +108,10 @@ Compose deployment. Node is done.
 
 ## What doesn't exist yet
 
-- **Go**: `#22` and `#23` (schema/scaffolding/endpoint API, publish & async expansion) are done —
-  see "What works" above. `#24`-`#27` (delivery worker, replay, visibility, test suite &
+- **Go**: `#22`-`#24` (schema/scaffolding/endpoint API, publish & async expansion, delivery
+  worker) are done — see "What works" above. `#25`-`#27` (replay, visibility, test suite &
   deployment) are not yet built, mirroring Node ticket-for-ticket including every review-driven
-  fix, not the pre-review design. `go/cmd/worker/` exists but only runs the expansion cycle —
-  `#24` extends its poll loop with delivery. Go's own "Test suite & deployment" ticket (`#27`)
+  fix, not the pre-review design. Go's own "Test suite & deployment" ticket (`#27`)
   must build the identical PRD §8 suite — see
   `activeContext.md`'s "What just happened" for the full shape `#21` established (`make test`/
   `properties`/`chaos`/`load`/`verify`, real spawned processes/signals for chaos, real spawned
@@ -170,7 +180,9 @@ Compose deployment. Node is done.
   queue. The fix: always fetch the true head unconditionally (`WHERE state='pending' ORDER BY
   seq LIMIT 1`, no `next_attempt_at` filter), then check eligibility in application code —
   release the claim without picking anything if the head isn't ready yet, rather than falling
-  through to a later row. **The Go implementation must not repeat this bug.**
+  through to a later row. **The Go implementation must not repeat this bug** — confirmed correct
+  in `#24`'s `internal/worker/delivery.go`'s `fetchClaimableHead` (same unconditional-fetch-then-
+  check-in-app-code shape), regression-tested in `delivery_claim_test.go`.
 - **`tsx`'s own CLI binary (`node_modules/.bin/tsx`) re-execs into a *second*, inner node
   process** carrying `--require .../preflight.cjs --import .../loader.mjs`, to satisfy Node's
   loader-hook API (which only applies `--import` at process start). If you `child_process.spawn()`
@@ -213,3 +225,25 @@ Compose deployment. Node is done.
   in Go's `#23`, diverging from Node's `z.record(z.unknown())`, which does reject `null`). Fix:
   decode into `any` first and type-assert the result to `map[string]any` — JSON `null` becomes a
   nil `interface{}`, which correctly fails that assertion, distinguishing it from a real object.
+- **A `*http.Transport` can be shared across concurrent goroutines for real connection pooling and
+  a per-host connection cap (`MaxConnsPerHost`) — but only if the per-request pinned IP is threaded
+  through `context.WithValue`, not baked into the `Transport`'s `DialContext` closure at
+  construction time.** A fresh `Transport` per call works but gets no pooling; mutating a shared
+  `Transport`'s `DialContext` per call races other goroutines using the same instance. Fix (see
+  `go/internal/worker/httpclient.go`'s `NewTransport`): build the `Transport` once with a
+  `DialContext` that reads the pinned IP out of the request's own context, and thread it in per
+  call via `context.WithValue`. Tracking "did this specific call's dial succeed" (needed to
+  distinguish `connect_timeout` from `total_timeout`) has the identical problem — a plain
+  closure-captured `bool`/`atomic.Bool` would be shared state across concurrent calls on a shared
+  `Transport`; use `net/http/httptrace.ClientTrace`'s `ConnectDone` callback instead, which is
+  scoped per-request via `httptrace.WithClientTrace(ctx, trace)`.
+- **A completed-response timestamp written by Postgres shouldn't be compared against this
+  process's own `time.Now()` with zero tolerance in a test** — same root cause as the earlier
+  "never compare a Node-side `new Date()` against Postgres's own `now()`" gotcha above, but hit
+  again in Go's `#24`: a full-jitter backoff delay can legitimately draw a value near 0ms, and by
+  the time a follow-up `SELECT` reads the row back and compares it to `time.Now()` in Go, a few
+  milliseconds of real wall-clock time (query round trip, scheduling) have already passed — an
+  exact `>= now()` assertion flakes on exactly that draw, rarely but for real (observed once in
+  normal test runs). Fix: give timestamp-freshness assertions a small tolerance (e.g. `time.Now().
+  Add(-500*time.Millisecond)`) instead of an exact instant — still catches a real scheduling bug,
+  not sensitive to sub-second timing races.
