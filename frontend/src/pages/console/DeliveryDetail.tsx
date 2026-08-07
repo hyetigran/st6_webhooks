@@ -7,6 +7,7 @@ import { Breadcrumb } from "../../design/Breadcrumb";
 import { Card } from "../../design/Card";
 import { ErrorState } from "../../design/ErrorState";
 import { Field } from "../../design/Field";
+import "../../design/Grid.css";
 import { LoadingState } from "../../design/LoadingState";
 import "../../design/Table.css";
 import { deliveryTone, nextAttemptDisplay } from "../../lib/deliveryDisplay";
@@ -75,7 +76,7 @@ export function DeliveryDetail() {
 
           <p style={{ fontSize: 14, marginBottom: 20 }}>{outstandingReason(data.state, data.blocked_on_delivery_id)}</p>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
+          <div className="app-grid-auto" style={{ marginBottom: 20 }}>
             <Field label="Event ID" value={data.event_id} mono />
             <Field label="Endpoint ID" value={data.endpoint_id} mono />
             <Field label="Attempts" value={`${data.attempt_count} of ${DEFAULT_MAX_ATTEMPTS}`} />
@@ -94,7 +95,7 @@ export function DeliveryDetail() {
           {data.last_response && (
             <Card style={{ marginBottom: 20 }}>
               <h3 style={{ fontSize: 13, marginBottom: 12, color: "var(--color-text-muted)" }}>LAST RESPONSE</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+              <div className="app-grid-auto">
                 <Field label="Status" value={data.last_response.response_status?.toString() ?? "—"} />
                 <Field label="Duration" value={data.last_response.duration_ms !== null ? `${data.last_response.duration_ms}ms` : "—"} />
                 <Field label="Error class" value={data.last_response.error_class ?? "—"} />

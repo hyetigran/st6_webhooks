@@ -7,6 +7,7 @@ import { Breadcrumb } from "../../design/Breadcrumb";
 import { Card } from "../../design/Card";
 import { ErrorState } from "../../design/ErrorState";
 import { Field } from "../../design/Field";
+import "../../design/Grid.css";
 import { LoadingState } from "../../design/LoadingState";
 import "../../design/Table.css";
 import { deliveryTone, nextAttemptDisplay } from "../../lib/deliveryDisplay";
@@ -43,7 +44,7 @@ export function EventDetail() {
             <Badge tone={data.status === "expanded" ? "accent" : "neutral"}>{data.status}</Badge>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 20 }}>
+          <div className="app-grid-auto" style={{ marginBottom: 20 }}>
             <Field label="Event ID" value={data.id} mono />
             <Field label="Published" value={formatDateTime(data.created_at)} />
             <Field label="Status" value={data.status} />

@@ -109,7 +109,7 @@ steps") — not a ticket, a decision-application step using data that now exists
   lerping straight center-to-center. Live-verified in Chrome side-by-side against the rendered mockup at 1440px:
   segmented controls, dashed/solid wire styling, arrowhead direction, and both tag states (idle outline / delivering
   filled) all confirmed matching; watched the dot ride multiple hops with no jump or desync. `npx tsc -b --noEmit` and
-  `npx vitest run` both clean. Not yet committed — sitting as uncommitted changes in the working tree.
+  `npx vitest run` both clean. Committed to `main` (`a974c59` + a follow-up memory-bank commit `29299ee`).
 
 - **Two real bugs the user caught by eye after the wiring pass above, both fixed the same session**: (1) traffic-band labels
   were "Quiet"/"Moderate"/"Flood" (a paraphrase, kept from before the pixel-fidelity pass) instead of the mockup's literal
@@ -158,11 +158,44 @@ steps") — not a ticket, a decision-application step using data that now exists
   clearly faster than before, motion still smooth, no console errors. `npx tsc -b --noEmit`, `npx oxlint`, `npx vitest
   run` all clean.
 
+- **Console dashboard (`Overview.tsx`) content/presentation pass** (standalone, user-requested review + "implement all" —
+  not a ticket, done on branch `worktree-dashboard-polish` in parallel with the pipeline-diagram work above) — the
+  Overview page was visibly the weakest console screen next to the detail views (`EndpointDetail.tsx`/
+  `DeliveryDetail.tsx`), which already had dense, well-labeled real-data copy. Fixed: `StatCard` gained an optional `danger`
+  tone (used on "Endpoints needing you" when count > 0) and every stat card now carries a context caption (endpoint counts,
+  reporting coverage, halted/paused breakdown) instead of a bare number with no way to tell "zero" from "no data yet."
+  "Needs attention" now sorts halted before paused (severity, not API order); the Recent events status column uses the
+  existing `Badge` component instead of plain text (matching `EventDetail.tsx`'s own tone convention); the backend name is
+  bolded in the subhead so a stat is harder to misread against the wrong backend. New `design/Grid.css`
+  (`.app-grid-auto` via `auto-fit`/`minmax`, `.app-grid-split` with one stacking breakpoint at 860px) replaces every fixed
+  `gridTemplateColumns` inline style across the console (`Overview.tsx`, `EndpointDetail.tsx`, `DeliveryDetail.tsx`,
+  `EventDetail.tsx`) — grepping the whole `frontend/src` tree beforehand found **zero** `@media` queries anywhere, so none
+  of these screens degraded gracefully below their designed width. Deliberately did **not** add a "recent failures" panel
+  (the improvement that would have most directly served the support-engineer user) — no tenant-wide deliveries endpoint
+  exists (only per-endpoint/per-event), and `Overview.tsx`'s own existing comment already documents that an N+1 fan-out
+  fetch for a summary page was ruled out when `#30` first built this page; the severity-sorted Needs attention list is the
+  failure-visibility mechanism instead. Live-verified in Chrome: real Node-backend data end to end, and the responsive
+  breakpoint specifically (the extension's screenshot viewport doesn't track OS window resize, so confirmed via
+  `document.styleSheets` that the compiled `@media (max-width: 860px)` rule loaded, then force-applied it via an injected
+  `<style>` to screenshot the actual stacked layout). Also hit and worked around, not fixed: **port 3000 on this dev
+  machine is bound by an unrelated project** (`ghost-chess`, an Expo app at `/Users/tig/Desktop/tigran/ghost-chess`) — the
+  real webhooks Node API on this machine actually runs on **3001**, with the main frontend dev server started as
+  `VITE_NODE_API_URL=http://localhost:3001 npm run dev` to route around it. `frontend/src/lib/backend.tsx`'s hardcoded
+  `http://localhost:3000` default is otherwise correct as *shipped* config — this is purely a local-machine port
+  collision, not a bug, but worth knowing before assuming "everything's already running" from `lsof` port-name output
+  alone next time. Committed to branch `worktree-dashboard-polish` (`d53e24e`), merged into `main` via `c3e0d59`.
+
+- **User locked the landing page** (`frontend/src/pages/Landing.tsx`, including `PipelineDiagram`) after the pixel-fidelity
+  pass above: don't modify it again without explicit permission each time, even as a side effect of other work. Saved as a
+  standing feedback memory (not just here) so it survives across sessions.
+
 ## Next steps
 
-- **The pipeline-wiring pass above (plus this session's four follow-up fixes) is uncommitted** — review and commit when ready.
-- Otherwise nothing outstanding on the landing page — all follow-up passes (evidence panel, pipeline diagram,
-  dot/highlight fix, dot restore, wiring pixel-fidelity pass) are live-verified.
+- Nothing outstanding on the landing page — all pipeline-diagram follow-up passes (evidence panel, pipeline diagram build,
+  dot/highlight fix, dot restore, wiring pixel-fidelity pass, band-label/overflow fixes, multi-packet stream, packet-speed
+  scaling) are live-verified and committed/merged to `main`. **Do not touch this page without the user's explicit
+  permission first** (see above).
+- Console dashboard polish pass above is committed and merged to `main` — nothing further queued there either.
 
 - **Primary-build designation** (ticket `#14`'s already-decided criteria) is the one remaining
   piece of work on the whole project — both stacks now have real `make load` evidence
