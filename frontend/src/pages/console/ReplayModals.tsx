@@ -1,15 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "../../design/Button";
 import { Modal } from "../../design/Modal";
+import { TextInput } from "../../design/TextInput";
 import type { AsyncAcceptedResponse } from "../../api/types";
-
-const inputStyle: React.CSSProperties = {
-  fontFamily: "var(--font-body)",
-  fontSize: 14,
-  padding: "8px 10px",
-  border: "1px solid var(--color-divider)",
-  borderRadius: "var(--radius)",
-};
 
 export function ReplayForm({
   endpointUrl,
@@ -50,11 +43,11 @@ export function ReplayForm({
         </p>
         <label style={{ fontSize: 13, display: "flex", flexDirection: "column", gap: 4 }}>
           From
-          <input type="datetime-local" required value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} style={inputStyle} />
+          <TextInput type="datetime-local" required value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} />
         </label>
         <label style={{ fontSize: 13, display: "flex", flexDirection: "column", gap: 4 }}>
           To
-          <input type="datetime-local" required value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} style={inputStyle} />
+          <TextInput type="datetime-local" required value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} />
         </label>
         {error && <p style={{ color: "var(--color-danger)", fontSize: 13, margin: 0 }}>{error}</p>}
         <Button type="submit" variant="primary" disabled={submitting}>

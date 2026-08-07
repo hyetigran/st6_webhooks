@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useApiClient } from "../../api/useApiClient";
 import { useBackend } from "../../lib/backend";
 import { Badge } from "../../design/Badge";
@@ -33,6 +33,7 @@ function countLabel(count: number, hasMore: boolean): string {
 export function Overview() {
   const client = useApiClient();
   const { backend } = useBackend();
+  const navigate = useNavigate();
 
   const endpointsQuery = useQuery({
     queryKey: ["endpoints", backend.id],
@@ -41,6 +42,11 @@ export function Overview() {
     refetchInterval: 3000,
   });
 
+  // Unlike Events.tsx's query key (which carries the actual filter value
+  // as its distinguishing suffix), these two intentionally use fixed
+  // labels — they aren't simple filters, they're two fixed-purpose
+  // fetches (a small sample vs. a 1h-windowed count) that happen to both
+  // hit GET /events.
   const eventsQuery = useQuery({
     queryKey: ["events", backend.id, "recent"],
     queryFn: () => client!.listEvents({ limit: 10 }),
@@ -142,12 +148,8 @@ export function Overview() {
                     </thead>
                     <tbody>
                       {eventsQuery.data!.events.map((event) => (
-                        <tr key={event.id}>
-                          <td className="app-mono">
-                            <Link to={`/console/events/${event.id}`} className="app-mono">
-                              {event.id}
-                            </Link>
-                          </td>
+                        <tr key={event.id} className="clickable" onClick={() => navigate(`/console/events/${event.id}`)}>
+                          <td className="app-mono">{event.id}</td>
                           <td>{event.type}</td>
                           <td>{formatDateTime(event.created_at)}</td>
                           <td>{event.status}</td>

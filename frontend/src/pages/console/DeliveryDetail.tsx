@@ -44,16 +44,28 @@ export function DeliveryDetail() {
 
   return (
     <div>
+      {/* PRD §7 calls this "the primary" screen — it must stay navigable
+         even when it can't load (a stale link, a deleted delivery, the
+         wrong backend selected), not just when data is present. The
+         precise Event/Endpoint links need fetched data to build, so they
+         only appear once `data` exists; until then, fall back to the
+         Events list rather than showing no way out at all. */}
+      <Breadcrumb>
+        {data ? (
+          <>
+            <Link to={`/console/events/${data.event_id}`}>Event {data.event_id}</Link> /{" "}
+            <Link to={`/console/endpoints/${data.endpoint_id}`}>Endpoint queue</Link>
+          </>
+        ) : (
+          <Link to="/console/events">Events</Link>
+        )}
+      </Breadcrumb>
+
       {isLoading && <LoadingState />}
       {isError && <ErrorState message={`Failed to load delivery: ${(error as Error).message}`} />}
 
       {data && (
         <>
-          <Breadcrumb>
-            <Link to={`/console/events/${data.event_id}`}>Event {data.event_id}</Link> /{" "}
-            <Link to={`/console/endpoints/${data.endpoint_id}`}>Endpoint queue</Link>
-          </Breadcrumb>
-
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
             <h1 style={{ fontSize: 24 }} className="app-mono">
               {data.id}

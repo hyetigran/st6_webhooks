@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useApiClient } from "../../api/useApiClient";
 import { useBackend } from "../../lib/backend";
 import { Card } from "../../design/Card";
 import { ErrorState } from "../../design/ErrorState";
 import { LoadingState } from "../../design/LoadingState";
+import { TextInput } from "../../design/TextInput";
 import "../../design/Table.css";
 import { formatDateTime } from "../../lib/format";
 
@@ -14,11 +15,16 @@ export function Events() {
   const { backend } = useBackend();
   const navigate = useNavigate();
   const [type, setType] = useState("");
+  // Reachable from an endpoint's queue view ("View event history") — the
+  // API client has always supported this filter (Shared REST API
+  // contract, R-24), it just had no UI path to it until now.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const endpointId = searchParams.get("endpoint_id");
 
-  const queryKey = ["events", backend.id, type];
+  const queryKey = ["events", backend.id, type, endpointId];
   const { data, isLoading, isError, error } = useQuery({
     queryKey,
-    queryFn: () => client!.listEvents({ limit: 50, type: type || undefined }),
+    queryFn: () => client!.listEvents({ limit: 50, type: type || undefined, endpoint_id: endpointId ?? undefined }),
     enabled: client !== null,
     refetchInterval: 3000,
   });
@@ -29,20 +35,20 @@ export function Events() {
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <h1 style={{ fontSize: 28 }}>Events</h1>
-        <input
-          type="text"
-          placeholder="Filter by type…"
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          style={{
-            fontFamily: "var(--font-body)",
-            fontSize: 14,
-            padding: "8px 10px",
-            border: "1px solid var(--color-divider)",
-            borderRadius: "var(--radius)",
-          }}
-        />
+        <TextInput type="text" placeholder="Filter by type…" value={type} onChange={(e) => setType(e.target.value)} />
       </div>
+
+      {endpointId && (
+        <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 12 }}>
+          Filtered to endpoint <span className="app-mono">{endpointId}</span> —{" "}
+          <button
+            onClick={() => setSearchParams({})}
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-accent-700)", padding: 0 }}
+          >
+            clear
+          </button>
+        </p>
+      )}
 
       {isLoading && <LoadingState />}
       {isError && <ErrorState message={`Failed to load events: ${(error as Error).message}`} />}

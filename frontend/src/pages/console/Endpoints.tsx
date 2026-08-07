@@ -10,6 +10,7 @@ import { Card } from "../../design/Card";
 import { ErrorState } from "../../design/ErrorState";
 import { LoadingState } from "../../design/LoadingState";
 import { Modal } from "../../design/Modal";
+import { TextInput } from "../../design/TextInput";
 import "../../design/Table.css";
 import { formatPercent, formatRelativeTime } from "../../lib/format";
 import { ActionErrorBanner, RevealedSecretModal, ResumeDisclosureModal } from "./EndpointActionModals";
@@ -81,6 +82,11 @@ export function Endpoints() {
 
       {data && data.endpoints.length > 0 && (
         <Card cornerMarks style={{ padding: 0 }}>
+          {/* Rows carry action buttons (Pause/Resume/Rotate/Replay), so
+             unlike the app's other list tables (Events, EndpointDetail's
+             queue, Overview's recent events — all whole-row-clickable)
+             this one deliberately links only the endpoint name: making
+             the whole row navigate would fight clicking those buttons. */}
           <table className="app-table">
             <thead>
               <tr>
@@ -88,7 +94,7 @@ export function Endpoints() {
                 <th>Status</th>
                 <th>Queue depth</th>
                 <th>Oldest pending</th>
-                <th>Success (24h)</th>
+                <th>Success (last 50)</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -213,37 +219,27 @@ function RegisterForm({
     onSubmit({ url: url.trim(), event_types: types });
   }
 
-  const inputStyle: React.CSSProperties = {
-    fontFamily: "var(--font-body)",
-    fontSize: 14,
-    padding: "8px 10px",
-    border: "1px solid var(--color-divider)",
-    borderRadius: "var(--radius)",
-  };
-
   return (
     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <h2 style={{ fontSize: 18 }}>Register endpoint</h2>
       <label style={{ fontSize: 13, display: "flex", flexDirection: "column", gap: 4 }}>
         URL
-        <input
+        <TextInput
           type="url"
           required
           placeholder="https://example.com/hook"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          style={inputStyle}
         />
       </label>
       <label style={{ fontSize: 13, display: "flex", flexDirection: "column", gap: 4 }}>
         Event types (comma-separated)
-        <input
+        <TextInput
           type="text"
           required
           placeholder="order.created, invoice.paid"
           value={eventTypes}
           onChange={(e) => setEventTypes(e.target.value)}
-          style={inputStyle}
         />
       </label>
       {error && <p style={{ color: "var(--color-danger)", fontSize: 13, margin: 0 }}>{error}</p>}

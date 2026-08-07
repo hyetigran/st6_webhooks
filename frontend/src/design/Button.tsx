@@ -10,7 +10,7 @@ const base: React.CSSProperties = {
   fontFamily: "var(--font-body)",
   fontSize: 14,
   fontWeight: 600,
-  padding: "6.8px 12.24px",
+  padding: "7px 12px",
   borderRadius: "var(--radius)",
   borderWidth: 1,
   borderStyle: "solid",

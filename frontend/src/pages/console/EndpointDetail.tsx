@@ -63,6 +63,10 @@ export function EndpointDetail() {
 
   return (
     <div>
+      {/* Always navigable, even before `endpoint` loads (or on load
+         failure) — unlike a per-delivery breadcrumb that needs fetched
+         data to know its links, "back to the list" never does, so there's
+         no reason this should ever be blank. */}
       <Breadcrumb>
         <Link to="/console/endpoints">Endpoints</Link>
       </Breadcrumb>
@@ -81,6 +85,9 @@ export function EndpointDetail() {
               </Badge>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
+              <Link to={`/console/events?endpoint_id=${endpoint.id}`}>
+                <Button disabled={busy}>Event history</Button>
+              </Link>
               <Button disabled={busy} onClick={() => setReplayTarget({ id: endpoint.id, url: endpoint.url })}>
                 Replay…
               </Button>
@@ -116,7 +123,7 @@ export function EndpointDetail() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
             <Field label="Queue depth" value={String(endpoint.queue_depth)} />
             <Field label="Oldest pending" value={formatRelativeTime(endpoint.oldest_pending_at)} />
-            <Field label="Success rate" value={formatPercent(endpoint.recent_success_rate)} />
+            <Field label="Success rate (last 50)" value={formatPercent(endpoint.recent_success_rate)} />
             <Field label="Registered" value={formatDateTime(endpoint.created_at)} />
           </div>
         </>
@@ -132,6 +139,9 @@ export function EndpointDetail() {
       )}
       {queue && queue.deliveries.length > 0 && (
         <Card cornerMarks style={{ padding: 0 }}>
+          {/* Link-in-cell, not whole-row-click, for the same reason as
+             Endpoints.tsx: a row here can carry its own nested "blocked
+             on <link>", which whole-row navigation would fight. */}
           <table className="app-table">
             <thead>
               <tr>
