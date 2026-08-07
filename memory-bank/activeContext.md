@@ -6,39 +6,36 @@ issue #1) and `git log`, then fix this file.
 
 ## Current phase
 
-**Both backend tracks are done; the frontend track (`#28-30`) is underway.** `#28`/`#29` are
-done. Only `#30` remains before the whole map is done, plus the primary-build designation
-synthesis step.
+**The entire wayfinder map is implementation-complete.** Both backend tracks (Node `#16-21`, Go
+`#22-27`) and the frontend track (`#28-30`) are done — every child ticket on the map is closed.
+The only work left on the whole project is the primary-build designation synthesis (see "Next
+steps") — not a ticket, a decision-application step using data that now exists.
 
 ## What just happened (most recent session)
 
-- **`#29` — Frontend: event/delivery detail & endpoint queue views built and merged** (MR !14 +
-  a follow-up code-review-fix commit, branch `29-frontend-event-delivery-queue-views`, off an
-  up-to-date `main` after `#28`'s merge). Full mechanism detail lives in `progress.md`'s "What
-  works," not repeated here.
-  - Built PRD §7 surfaces 2-4 (event detail, delivery detail — "the primary screen," endpoint
-    queue with a real halted-head highlight) plus the Events search list. Deliberately did not
-    fabricate the mockup's "what we sent" header/signature preview since the real API doesn't
-    return that data — grounded every field in the actual response shape instead.
-  - Extracted `useEndpointActions`/`EndpointActionModals` (shared across the endpoints list and
-    the new endpoint-detail view) proactively, before this ticket could triple that logic.
-  - `/code-review`: both axes found real issues — Standards found duplicated
-    `deliveryTone`/`Field`/`Breadcrumb`/next-attempt-display logic across the three new pages and
-    a genuine `formatRelativeTime` bug (future timestamps read "0s ago" instead of "in Xs");
-    Spec found the head-highlight wasn't actually a highlight and the interactive resume flow had
-    leaked into `#29` when it's `#30`'s explicit scope. All fixed in a follow-up commit,
-    re-verified live against both backends before merging.
+- **`#30` — Frontend: replay UI & polish built and merged** (MR !15 + a follow-up
+  code-review-fix commit, branch `30-frontend-replay-polish`, off an up-to-date `main` after
+  `#29`'s merge) — the last ticket on the entire map. Full mechanism detail lives in
+  `progress.md`'s "What works," not repeated here.
+  - Built the replay-trigger UI and integrated resume-from-halted into `#29`'s endpoint queue
+    view (deliberately deferred there). Added the Overview dashboard home page (bonus scope) and
+    a 404 route.
+  - `/code-review`: Spec found a real bug — the new Overview page had zero error handling and
+    silently showed a false "everything's healthy" message on an actual fetch failure (verified
+    live: a bad API key now correctly shows the real error) — and that the ticket's own "polish
+    pass across all views" had left 3 of 5 pre-existing views untouched (fixed: extracted shared
+    `LoadingState`/`ErrorState` components, applied everywhere). Standards found a silent
+    pagination-truncation gap, a `busy`-state composition gap, a missed query invalidation, and a
+    `{id,url}` data clump. All fixed in a follow-up commit, re-verified live before merging.
 
 ## Next steps
 
-- `#30` — Frontend: replay UI & polish, blocked by `#28`+`#29` (now both satisfied) — builds the
-  replay-trigger UI, integrates the resume-from-halted flow into `#29`'s endpoint queue view
-  (deliberately deferred there), and adds an Overview dashboard home page plus a
-  loading/error/empty-state polish pass across every view.
-- **Primary-build designation** (ticket `#14`'s decision) can now actually happen — both stacks
-  have real `make load` evidence (`evidence/load/` for Node, `evidence/go/load/` for Go). Nobody
-  has run the comparison yet; this is a synthesis step, not a new ticket, likely worth doing once
-  the frontend track is also done (or sooner, if the user wants the call made now).
+- **Primary-build designation** (ticket `#14`'s already-decided criteria) is the one remaining
+  piece of work on the whole project — both stacks now have real `make load` evidence
+  (`evidence/load/` for Node, `evidence/go/load/` for Go) to apply it to. Nobody has run the
+  actual comparison yet. This is a synthesis/decision step, not a wayfinder ticket (the map has
+  no open children left) — worth doing whenever the user wants the primary-build call made.
+- Beyond that, see "Open questions / risks being watched" below — nothing new this session.
 
 ## Open questions / risks being watched
 

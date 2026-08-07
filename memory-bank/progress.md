@@ -158,6 +158,25 @@ not a replacement for it.
   genuine 503s during testing — real retry/backoff data), followed through every new view
   including a genuinely halted endpoint's Resume flow (from the list) showing the correct R-14
   disclosure with the real failed delivery's ID.
+- **Frontend — replay UI & polish** (`#30`, last ticket on the entire map): replay-trigger UI
+  (`frontend/src/pages/console/ReplayModals.tsx`/`useReplayAction.ts` — range picker, fresh
+  `crypto.randomUUID()` Idempotency-Key per submit, shows the resulting `{id, status}`), shared
+  between the endpoints list and the endpoint-detail view exactly like `useEndpointActions`.
+  Resume-from-halted (R-14 disclosure) re-integrated into `EndpointDetail.tsx`'s queue view —
+  deliberately deferred there from `#29`. `Overview.tsx` — a dashboard home page (bonus scope,
+  not one of PRD §7's 4 surfaces): `queue_depth` summed and `recent_success_rate` averaged across
+  `GET /endpoints` (labeled "endpoint avg," not a properly-weighted tenant-wide rate — the API
+  doesn't expose per-endpoint delivery counts to weight by), "events published (1h)" via
+  `GET /events?from=`, "recent events" (not "recent deliveries" — no tenant-wide deliveries
+  endpoint exists) — every stat reads "N+" instead of a bare N when its query's `next_cursor`
+  says there's more, rather than silently plateauing past the 100-item page cap. Shared
+  `design/LoadingState.tsx`/`design/ErrorState.tsx` applied consistently across all 6 console
+  views (completing the polish pass — 3 views had been left with `#28`/`#29`'s original bare
+  `<p>` treatment until `/code-review` caught it). `NotFound.tsx` 404 route. Live-verified: a real
+  replay over a real historical window on a genuinely halted endpoint, server-side expansion
+  creating new pending deliveries with correct blocked-on-new-head fencing observed via the
+  queue view; a real bad-API-key error correctly surfacing on the Overview page instead of a
+  false "healthy" state.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -168,15 +187,20 @@ not a replacement for it.
 
 ## What's built but not yet exercised end-to-end
 
-Nothing — both the Node and Go stacks have been verified live against real running processes,
-real external infrastructure (httpbin.org, postman-echo.com), real historical data, and (for
-`#21`/`#27`) a real Docker Compose deployment each. Both backends are done.
+Nothing — the whole system (both backends and the frontend) has been verified live against real
+running processes, real external infrastructure (httpbin.org, postman-echo.com), real historical
+data, and (for `#21`/`#27`) a real Docker Compose deployment each. The frontend has been driven
+through a real browser against both real backends simultaneously, including the runtime backend
+switcher. Every ticket on the map is done.
 
 ## What doesn't exist yet
 
-- **Frontend**: `#28`/`#29` are done — see "What works" above. Only `#30` (replay-trigger UI, the
-  resume-from-halted flow integrated into `#29`'s endpoint queue view, an Overview dashboard home
-  page, and a loading/error/empty-state polish pass) remains.
+Nothing at the ticket level — every child ticket on the wayfinder map (Node `#16-21`, Go
+`#22-27`, frontend `#28-30`) is closed. What remains is the primary-build designation synthesis
+(ticket `#14`'s already-decided criteria, applied to both stacks' real `make load` evidence —
+`evidence/load/` for Node, `evidence/go/load/` for Go — nobody has run the actual comparison
+yet) and the loose ends already tracked below (`replays.status` polling exposure, C-2, the root
+`README.md`).
 - **`README.md`**: the *final submission* root version is still not started — needs primary-
   build designation (`#14`). `node/README.md` (owned by `#21`) and `go/README.md` (owned by
   `#27`) are both done, each a real clone-to-run guide for its own stack; the root `README.md`
@@ -394,6 +418,39 @@ real external infrastructure (httpbin.org, postman-echo.com), real historical da
   the delta's sign (`isFuture ? "in X" : "X ago"`) — **any date-relative formatter needs both
   directions covered from the start**, not just whichever direction its first caller happened to
   need.
+- **TanStack Query's `refetchInterval` pauses in a backgrounded browser tab by default** (needs
+  `refetchIntervalInBackground: true` to keep polling while hidden) — looked like a real stale-
+  data bug in `#30` while live-verifying the endpoint queue view via browser automation (4
+  deliveries existed server-side per a direct `curl` check, only 2 showed in the UI even after
+  9+ seconds). Confirmed *not* a bug: a fresh navigation immediately showed all 4 rows, matching
+  `refetchOnWindowFocus`'s default-true catch-up behavior. This is correct, sensible behavior for
+  a real user (no wasted polling for a tab nobody's looking at, instant catch-up on return) — the
+  false alarm was purely an artifact of the browser-automation environment's tab-visibility
+  state, not the app. Worth remembering next time a "polling isn't working" symptom shows up
+  during automated testing specifically: check whether the tab genuinely has focus before
+  assuming the interval itself is broken.
+- **A dashboard that aggregates client-side over a paginated list query needs to say so when it
+  hits the page cap** — `#30`'s `Overview.tsx` originally fetched `GET /endpoints`/`GET /events`
+  with `limit: 100` and used the returned array's `.length` directly as a stat, silently
+  ignoring `next_cursor`. Past 100 items, every derived stat (pending total, avg success rate,
+  endpoints-needing-attention count, events-published count) would quietly plateau or undercount
+  with zero indication anything was capped — caught by `/code-review`, not by hand, since nothing
+  in this project's current test data ever approached 100 items. Fixed by checking
+  `next_cursor !== null` and rendering "N+" instead of a bare N whenever there's more. **Any
+  future page that aggregates over a single fetched page (rather than following pagination to
+  completion) needs the same honesty check** — this is a real architectural tradeoff (full
+  pagination-following for a summary page is its own cost/complexity), not just this one page's
+  oversight.
+- **An unweighted average across a per-entity ratio field (e.g. averaging each endpoint's own
+  `recent_success_rate` to get a tenant-wide number) silently commits the "average of averages"
+  fallacy if the entities have different underlying sample sizes** — `#30`'s `Overview.tsx`
+  averages `recent_success_rate` (itself an average over each endpoint's last-50-deliveries
+  window) across all endpoints with equal weight, so a 2-delivery endpoint counts the same as a
+  50-delivery one. Not fixed (the API doesn't expose per-endpoint delivery counts to weight by —
+  fixing this properly would need a new field), but the label was changed from "Success rate
+  (avg)" to "Success rate (endpoint avg)" to be honest about what it actually measures rather
+  than implying a properly-weighted tenant-wide rate. **Any future feature wanting a true
+  weighted average across this data needs the backend to expose counts, not just ratios.**
 - **Go's dynamic-WHERE-clause routes should build the query string by direct accumulation
   (`query += fmt.Sprintf(" AND ...", ...)`), not a `conditions []string` + `strings.Join` slice**
   — the latter mirrors Node's own shape (`node/src/routes/events.ts`'s `conditions` array) closely
