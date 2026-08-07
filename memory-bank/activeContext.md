@@ -19,11 +19,8 @@ frontend (`#28-30`) hasn't started.
   mechanism detail lives in `progress.md`'s "What works," not repeated here.
   - Built `POST /endpoints/{id}/replays` and `internal/worker.RunReplayExpansionCycle`, ported
     from Node's already-reviewed `replays.ts`/`replayExpansion.ts`.
-  - Verified: 11 new tests green on first run against real Postgres. Live e2e: published and
-    delivered a real event to postman-echo.com (httpbin.org was down at the time), replayed it,
-    watched the worker expand and successfully redeliver via a fresh delivery row reusing the
-    original `event_id` — confirming R-19/R-20 for real. Bonus: an earlier delivery against the
-    down httpbin.org correctly halted at `failed` after exhausting retries.
+  - Verified: 12 new tests green on first run against real Postgres, plus a live e2e replay
+    against a real external receiver — see `progress.md`'s "What works" for what that proved.
   - `/code-review` found and fixed a real REST-surface divergence: Go's `time.Parse` accepted
     non-UTC timezone offsets (e.g. `+01:00`) that Node's `z.string().datetime()` rejects by
     default — fixed with an explicit `Z`-suffix check, regression-tested. Also fixed a

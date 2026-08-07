@@ -120,10 +120,9 @@ Compose deployment. Node is done.
   worker, replay) are done — see "What works" above. `#26`-`#27` (visibility & read API, test
   suite & deployment) are not yet built, mirroring Node ticket-for-ticket including every
   review-driven fix, not the pre-review design. Go's own "Test suite & deployment" ticket (`#27`)
-  must build the identical PRD §8 suite — see
-  `activeContext.md`'s "What just happened" for the full shape `#21` established (`make test`/
-  `properties`/`chaos`/`load`/`verify`, real spawned processes/signals for chaos, real spawned
-  api/worker for load).
+  must build the identical PRD §8 suite — see this file's own `#21` entry above ("What works")
+  for the full shape Node established (`make test`/`properties`/`chaos`/`load`/`verify`, real
+  spawned processes/signals for chaos, real spawned api/worker for load).
 - **Frontend**: entire SPA (`#28-30`) — buildable now against the fixed REST contract, every
   route across `#16`-`#21` live-verified.
 - **`README.md`**: the *final submission* root version is still not started — needs primary-
