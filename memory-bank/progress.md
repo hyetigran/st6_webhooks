@@ -474,3 +474,39 @@ yet) and the loose ends already tracked below (`replays.status` polling exposure
   idioms for the same kind of task in one package is its own (mild) inconsistency — caught by
   `/code-review` on `#26`'s `listEvents`. Default to the accumulation style for any new Go route
   with optional filters, even when porting from a Node route that uses the array-join shape.
+- **A wrapper-spawned process's *compiled child* drops the source path from its own command
+  line, so `pgrep -f "<source-path-pattern>"` — the obvious way to check "is the real worker
+  running?" — silently misses it.** This is the concrete failure mode the `tsx`/`go run`
+  wrapper-process gotchas above were warning about, hit for real while building the heavy-traffic
+  seed scripts (`node/scripts/seedHeavyTraffic.ts`, `go/cmd/seedheavytraffic/`): those scripts need
+  the real dev worker (`npm run dev:worker` / `go run ./cmd/worker`) stopped, since it enforces the
+  real SSRF check and races a seeding script's permissive local-receiver workers for claims,
+  producing genuine `url_not_allowed` attempts mixed into otherwise-clean seeded data. `pgrep -fl
+  "cmd/worker"` reported nothing running — but a `go-build.../exe/worker` binary had been
+  orphaned since 3:12 AM (untouched for hours, from a completely unrelated earlier session) and was
+  still very much alive and claiming deliveries; a Node `src/worker.ts` also got silently
+  respawned mid-run (this dev environment — Cursor — appears to auto-restart these as persistent
+  background tasks). Neither showed up under a source-path grep since the actual running process
+  is `/var/folders/.../go-build.../exe/worker` or a bare `node .../loader.mjs src/worker.ts`
+  invocation once already compiled/loaded — the grep pattern needs to match the *compiled binary
+  path* (`go-build.*/exe/worker`) or the *loaded script path* (`src/worker\.ts`), not the original
+  `go run`/`npm run` invocation text, and the check has to be re-run continuously (a
+  process-killing loop for the duration of the seeding run), not just once at the start — a
+  one-time kill doesn't survive an auto-restarting task manager. **Any future script needing
+  exclusive access to a worker process must check by compiled-path/loaded-script pattern, not
+  source-path pattern, and must guard continuously, not just once.**
+- **Waiting for a delivery backlog to fully drain (every row reaches a terminal state) is a much
+  slower, effectively unbounded operation than waiting for expansion to finish** — expansion is
+  fast (tenant-serialized, ~a few ms per event) and is what actually creates the delivery rows, but
+  delivery throughput is capped by the number of *distinct active endpoints* with pending work
+  (single-flight-per-endpoint, R-2/R-11), not by however many worker processes exist. Found in the
+  heavy-traffic seed scripts: a full-scale run (`node/scripts/seedHeavyTraffic.ts`) took ~29
+  minutes to fully drain 110k deliveries across ~9 active endpoints — comfortably past any
+  reasonable background-process time budget in this environment (empirically, background Bash
+  invocations here get killed somewhere around the 25-30 minute mark, confirmed by three separate
+  runs dying at that point). Fixed by splitting into two phases: wait for expansion to finish
+  (fast, bounded ~5 min), then run delivery for a fixed window (8 min) rather than to completion —
+  a partial drain is not a compromise here, either: a dashboard meant to demonstrate heavy traffic
+  should show a real backlog (pending/in-flight rows, real queue depth), not one that's already
+  been fully drained by the time anyone looks at it. **Any future script doing bulk real-pipeline
+  seeding should default to this two-phase wait, not a single "block until fully drained" loop.**

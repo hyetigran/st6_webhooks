@@ -189,6 +189,19 @@ steps") — not a ticket, a decision-application step using data that now exists
   pass above: don't modify it again without explicit permission each time, even as a side effect of other work. Saved as a
   standing feedback memory (not just here) so it survives across sessions.
 
+- **Heavy-traffic seed scripts built** (`node/scripts/seedHeavyTraffic.ts`, `go/cmd/seedheavytraffic/main.go`, both
+  uncommitted) — user wanted the console dashboard to look interesting under real volume rather than near-empty demo data.
+  Both go through the real pipeline end to end (real publish-shaped inserts → real expansion → real HTTP delivery through
+  the real worker cycles), not fabricated delivery outcomes — the one sanctioned exception is the same local-receiver
+  SSRF-bypass seam `chaos/worker-entrypoint.ts`/`cmd/chaosworker` already established (never weakening the real check).
+  Ten endpoint profiles (healthy/flaky/deterministic-retry/always-fails/paused/slow), one large shared event stream plus
+  several small dedicated ones so fan-out — not raw event count — does the heavy lifting cheaply (expansion is
+  serialized-per-tenant, so total event count is the real throughput ceiling, not delivery-row count). Result on both
+  backends: 110,041 (Node) / 110,040 (Go) delivery rows, all genuinely resolved (halted-by-design and paused-by-design
+  endpoints aside) after a follow-up fix — see progress.md's gotchas for the process-management saga this took to get a
+  clean run, and for the completion-detection design lesson (wait for expansion, then a bounded delivery window — not
+  full drain, which is an unbounded tail single-flight-per-endpoint makes very slow).
+
 ## Next steps
 
 - Nothing outstanding on the landing page — all pipeline-diagram follow-up passes (evidence panel, pipeline diagram build,
@@ -196,6 +209,9 @@ steps") — not a ticket, a decision-application step using data that now exists
   scaling) are live-verified and committed/merged to `main`. **Do not touch this page without the user's explicit
   permission first** (see above).
 - Console dashboard polish pass above is committed and merged to `main` — nothing further queued there either.
+- **Heavy-traffic seed scripts are uncommitted** — `node/scripts/seedHeavyTraffic.ts` and `go/cmd/seedheavytraffic/` sit
+  in the working tree; ask the user whether they want them committed (as dev tooling, not part of `make verify`/test/
+  chaos/load) or left as a one-off.
 
 - **Primary-build designation** (ticket `#14`'s already-decided criteria) is the one remaining
   piece of work on the whole project — both stacks now have real `make load` evidence
