@@ -1,0 +1,41 @@
+/* Design tokens, extracted from the reference mockup (repo root:
+   "Webhook API server landing and dashboard/") via computed-style
+   inspection of its live-rendered pages — not eyeballed from
+   screenshots. Every view in this app reads from these tokens rather
+   than hardcoding values, so the visual language stays consistent
+   across the landing page and every console screen. */
+:root {
+  --color-bg: #f2f2f3;
+  --color-surface: #ffffff;
+  --color-text: #1d1f20;
+  --color-text-muted: #58585b;
+  --color-accent: #5980a6;
+  --color-accent-100: #eef6ff;
+  --color-accent-700: #416180;
+  --color-accent-800: #2c455d;
+  --color-divider: color-mix(in srgb, #1d1f20 16%, transparent);
+  --color-badge-bg: #f5f5f8;
+
+  /* Muted, restrained — the mockup's own tone is factual, not alarmed
+     (a halted endpoint's badge is plain neutral gray, not red). Used
+     sparingly, text-only, for genuinely terminal/bad states. */
+  --color-danger: #a34a3a;
+  --color-danger-700: #7c3828;
+
+  --font-body: "Barlow", system-ui, sans-serif;
+  --font-heading: "Barlow Condensed", system-ui, sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Every element in the reference design has a squared corner — a
+     deliberate, consistent "technical/blueprint" aesthetic, not an
+     oversight. Nothing in this app should set its own border-radius. */
+  --radius: 0px;
+}

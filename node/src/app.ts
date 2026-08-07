@@ -1,5 +1,7 @@
+import cors from "cors";
 import express from "express";
 import { requireTenant } from "./auth/middleware.js";
+import { cors as corsConfig } from "./config.js";
 import { endpointsRouter } from "./routes/endpoints.js";
 import { eventsRouter } from "./routes/events.js";
 import { replaysRouter } from "./routes/replays.js";
@@ -7,6 +9,16 @@ import { deliveriesRouter } from "./routes/deliveries.js";
 
 export function createApp() {
   const app = express();
+  // Must run before requireTenant: a browser's CORS preflight (OPTIONS)
+  // never carries the Authorization header, so requireTenant would reject
+  // it with 401 — cors() answers preflights itself and never reaches the
+  // auth middleware.
+  app.use(
+    cors({
+      origin: corsConfig.origin,
+      allowedHeaders: ["authorization", "content-type", "idempotency-key"],
+    }),
+  );
   app.use(express.json());
 
   app.get("/healthz", (_req, res) => {

@@ -83,6 +83,16 @@ type ServerConfig struct {
 	Port int
 }
 
+// CORSConfig controls cross-origin access (docs/adr — "ADR-008", the
+// shared frontend/ SPA calls this API from its own origin). "*" is a
+// defensible default: auth here is a Bearer token in a header, not a
+// cookie/session, so a wildcard Access-Control-Allow-Origin can't be
+// leveraged into a cross-site credentialed request the way it could
+// against cookie-based auth.
+type CORSConfig struct {
+	Origin string
+}
+
 // WorkerConfig tunes the poll loop's idle wait and concurrency.
 type WorkerConfig struct {
 	// How long to wait before polling again after a cycle found nothing to
@@ -111,6 +121,7 @@ type Config struct {
 	Signing        SigningConfig
 	SecretRotation SecretRotationConfig
 	Server         ServerConfig
+	CORS           CORSConfig
 	Worker         WorkerConfig
 	DB             DBConfig
 
@@ -144,6 +155,9 @@ func Load() Config {
 		},
 		Server: ServerConfig{
 			Port: envInt("PORT", 8090),
+		},
+		CORS: CORSConfig{
+			Origin: envString("CORS_ORIGIN", "*", false),
 		},
 		Worker: WorkerConfig{
 			IdlePollIntervalMs: envInt("WORKER_IDLE_POLL_INTERVAL_MS", 200),

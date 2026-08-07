@@ -24,7 +24,7 @@ var (
 
 func newTestServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	t.Helper()
-	srv := api.NewServer(pool, testsupport.SecretEncryptionKey, config.SecretRotationConfig{OverlapHours: 24})
+	srv := api.NewServer(pool, testsupport.SecretEncryptionKey, config.SecretRotationConfig{OverlapHours: 24}, "*")
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
