@@ -6,6 +6,7 @@ package testsupport
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,33 @@ import (
 // TestDatabaseURL is the isolated Go-stack test database (go/README.md),
 // separate from Node's webhooks_node_test on port 5532.
 const TestDatabaseURL = "postgres://webhooks:webhooks@localhost:5533/webhooks_go_test"
+
+const testAdminDatabaseURL = "postgres://webhooks:webhooks@localhost:5533/postgres"
+const testDatabaseName = "webhooks_go_test"
+
+// ensureTestDatabase creates webhooks_go_test if it doesn't exist yet — so
+// `make test` works on a fresh clone with no manual `createdb` step, the
+// same as node/test/global-setup.ts's ensureTestDatabase does for the Node
+// stack. Deliberately not shared with internal/scenariosupport's near-
+// identical ensureDatabase: that package serves make chaos/make load, a
+// separate concern from the plain `go test` path.
+func ensureTestDatabase(ctx context.Context) error {
+	admin, err := pgxpool.New(ctx, testAdminDatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer admin.Close()
+
+	var exists bool
+	if err := admin.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", testDatabaseName).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err = admin.Exec(ctx, "CREATE DATABASE "+testDatabaseName)
+	return err
+}
 
 // SecretEncryptionKey is the AES-256-GCM key shared by every test suite's
 // fixtures and server construction, so an endpoint's encrypted-at-rest
@@ -40,13 +68,24 @@ func SetupPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
 
+	var setupErr error
+	migrateOnce.Do(func() {
+		if setupErr = ensureTestDatabase(ctx); setupErr != nil {
+			return
+		}
+		pool, err := db.NewPool(ctx, TestDatabaseURL)
+		if err != nil {
+			setupErr = err
+			return
+		}
+		defer pool.Close()
+		setupErr = db.Migrate(ctx, pool)
+	})
+	require.NoError(t, setupErr)
+
 	pool, err := db.NewPool(ctx, TestDatabaseURL)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
-
-	migrateOnce.Do(func() {
-		require.NoError(t, db.Migrate(ctx, pool))
-	})
 
 	_, err = pool.Exec(ctx, "TRUNCATE tenants, endpoints, events, deliveries, attempts, replays RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
@@ -242,4 +281,63 @@ func CreateAttempt(t *testing.T, pool *pgxpool.Pool, deliveryID string, opts Att
 	).Scan(&id)
 	require.NoError(t, err)
 	return id
+}
+
+// ConformingReceiver is the reference fixture for REVIEW.md F-13 / PRD §6:
+// receivers must dedupe on *successfully processed* event_id, not on
+// event_id merely seen at attempt time — a receiver that marks an id "seen"
+// before processing succeeds would silently no-op the replay of an event
+// that never actually completed, defeating the reason to replay it.
+// ProcessedEventIDs only ever gains an entry on the attempt where
+// shouldSucceed says the receiver's business logic actually completed,
+// never on mere receipt. Safe for concurrent requests (Go's http.Server
+// handles each on its own goroutine, unlike Node's single-threaded
+// equivalent).
+type ConformingReceiver struct {
+	mu                sync.Mutex
+	processedEventIDs map[string]bool
+	attemptsByEventID map[string]int
+	shouldSucceed     func(eventID string, attemptNumber int) bool
+}
+
+func NewConformingReceiver(shouldSucceed func(eventID string, attemptNumber int) bool) *ConformingReceiver {
+	return &ConformingReceiver{
+		processedEventIDs: map[string]bool{},
+		attemptsByEventID: map[string]int{},
+		shouldSucceed:     shouldSucceed,
+	}
+}
+
+func (r *ConformingReceiver) Handler(w http.ResponseWriter, req *http.Request) {
+	eventID := req.Header.Get("Webhook-Event-Id")
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.processedEventIDs[eventID] {
+		w.WriteHeader(http.StatusOK) // idempotent no-op — already successfully processed
+		return
+	}
+
+	r.attemptsByEventID[eventID]++
+	attemptNumber := r.attemptsByEventID[eventID]
+
+	if r.shouldSucceed(eventID, attemptNumber) {
+		r.processedEventIDs[eventID] = true
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+func (r *ConformingReceiver) HasProcessed(eventID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.processedEventIDs[eventID]
+}
+
+func (r *ConformingReceiver) AttemptCount(eventID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.attemptsByEventID[eventID]
 }

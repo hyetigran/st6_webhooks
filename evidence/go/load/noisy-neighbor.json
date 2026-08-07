@@ -1,0 +1,23 @@
+{
+  "durationMs": 1191,
+  "floodDeliveryCount": 100,
+  "floodSucceededSoFar": 100,
+  "quietLatenciesMs": [
+    50.809,
+    50.809,
+    50.896,
+    51.135,
+    51.155,
+    51.263,
+    51.278,
+    52.268,
+    52.308,
+    52.653
+  ],
+  "quietP50Ms": 51.263,
+  "quietP99Ms": 52.653,
+  "scenario": "noisy-neighbor",
+  "status": "pass",
+  "timestamp": "2026-08-07T06:47:03Z",
+  "workerCount": 3
+}

@@ -1,0 +1,11 @@
+{
+  "drainOrder": [
+    "af625cc0-da8d-433d-a0f3-65af2f833b4d",
+    "58c28254-4fd9-49f3-9cd7-a4faad1adbc0",
+    "a9609aa5-8f0d-4b2a-a5b8-2c8fa0a0425d"
+  ],
+  "durationMs": 421,
+  "scenario": "partition-head-blocked-then-drains",
+  "status": "pass",
+  "timestamp": "2026-08-07T06:46:54Z"
+}
