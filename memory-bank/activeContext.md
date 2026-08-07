@@ -65,15 +65,22 @@ steps") — not a ticket, a decision-application step using data that now exists
   `evidence/load/publish-latency-flat.json` / `evidence/go/load/publish-latency-flat.json`, keyed by traffic band → event
   level). Illustrative: Published/Queue depth/In flight/Delivered are a compressed-time simulation, stated in the panel's own
   disclaimer line. Committed straight to `main` (`707f879`) — no ticket/MR.
-- **Neither landing-page pass has been live-verified in a real browser** — the Chrome extension wasn't connected in either
-  session; typecheck/lint/test/build are all clean and the new code only composes already-verified design primitives (`Card`,
-  `Badge`, `Button`), but an actual visual/interaction check (does the diagram's dot actually animate smoothly, do the
-  segmented controls read correctly at the mockup's `min-width: 1000px` diagram width) is still owed.
+- **Pipeline diagram's dot/highlight desync found and fixed, live-verified in Chrome** (the Chrome extension reconnected this
+  session, closing out the "not live-verified" gap from the previous two passes) — the user reported "the pipeline UI shifted
+  once more" after the diagram landed. Root cause: the moving "packet" dot animated its position via a CSS transition (an
+  810ms glide) while the active box's border highlight switched instantly on the same `stage` change — two independent
+  animation schedules driven by the same state, so a screenshot mid-transition could show the dot sitting in one box while a
+  completely different box had the highlighted border (confirmed: caught the border on "Delivery loop" while the dot was
+  still gliding near "Events"). Fixed by deleting the floating cross-diagram dot entirely and rendering a small pulsing
+  indicator (new `gr-pulse` keyframes in `index.css`) as a child of the active box itself, driven by the exact same
+  `stage === i` conditional that colors the border — both now come from one check in one render, so they can't disagree.
+  Verified live: toggled Implementation/Traffic band/Scenario controls and Play/Pause repeatedly, confirmed the pulse and
+  border always land on the same box every time. Committed straight to `main` (`50ca930`) — no ticket/MR.
 
 ## Next steps
 
-- **Verify the landing page visually** in a real browser, especially the new `PipelineDiagram` — skipped twice in a row only
-  because the Chrome extension wasn't connected, not because it was judged low-risk enough to skip on purpose.
+- Nothing outstanding on the landing page — all three follow-up passes (evidence panel, pipeline diagram, dot/highlight fix)
+  are live-verified and pushed.
 
 - **Primary-build designation** (ticket `#14`'s already-decided criteria) is the one remaining
   piece of work on the whole project — both stacks now have real `make load` evidence
