@@ -1,11 +1,11 @@
 {
   "scenario": "partition-head-blocked-then-drains",
-  "timestamp": "2026-08-06T23:16:16.323Z",
+  "timestamp": "2026-08-07T14:38:30.299Z",
   "status": "pass",
-  "durationMs": 889,
+  "durationMs": 1497,
   "drainOrder": [
-    "ef6889d2-a09f-4f8b-8b14-ea953becf9b2",
-    "30ac061c-bd95-43a6-a5cd-e8f7d600369e",
-    "0c754032-c0ce-4a6b-9177-a7598758a3b4"
+    "33897e28-7bde-4120-ae19-987ff53c8f8e",
+    "b17310ed-0407-441c-bd0a-6ac2a635ed7c",
+    "df5749bc-69c0-4f6c-901e-84298cf3fb0b"
   ]
 }

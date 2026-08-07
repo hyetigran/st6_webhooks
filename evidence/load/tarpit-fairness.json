@@ -1,10 +1,10 @@
 {
   "scenario": "tarpit-fairness",
-  "timestamp": "2026-08-06T23:16:27.368Z",
+  "timestamp": "2026-08-07T14:38:41.163Z",
   "status": "pass",
-  "durationMs": 1537,
+  "durationMs": 1400,
   "workerCount": 3,
   "outboundTotalTimeoutMs": 1000,
   "boundMs": 2000,
-  "addedLatencyMs": 1024.958167
+  "addedLatencyMs": 986.824375
 }

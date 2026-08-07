@@ -1,8 +1,8 @@
 {
-  "attemptCount": 2,
-  "durationMs": 2412,
+  "attemptCount": 3,
+  "durationMs": 3643,
   "finalState": "succeeded",
   "scenario": "worker-kill-mid-delivery",
   "status": "pass",
-  "timestamp": "2026-08-07T07:00:06Z"
+  "timestamp": "2026-08-07T14:38:32Z"
 }

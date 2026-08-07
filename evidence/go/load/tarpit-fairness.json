@@ -1,10 +1,10 @@
 {
-  "addedLatencyMs": 995.253,
+  "addedLatencyMs": 1035.872,
   "boundMs": 2000,
-  "durationMs": 1185,
+  "durationMs": 1231,
   "outboundTotalTimeoutMs": 1000,
   "scenario": "tarpit-fairness",
   "status": "pass",
-  "timestamp": "2026-08-07T07:00:24Z",
+  "timestamp": "2026-08-07T14:38:53Z",
   "workerCount": 3
 }
