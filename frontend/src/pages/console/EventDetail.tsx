@@ -5,7 +5,9 @@ import { useBackend } from "../../lib/backend";
 import { Badge } from "../../design/Badge";
 import { Breadcrumb } from "../../design/Breadcrumb";
 import { Card } from "../../design/Card";
+import { ErrorState } from "../../design/ErrorState";
 import { Field } from "../../design/Field";
+import { LoadingState } from "../../design/LoadingState";
 import "../../design/Table.css";
 import { deliveryTone, nextAttemptDisplay } from "../../lib/deliveryDisplay";
 import { formatDateTime } from "../../lib/format";
@@ -31,8 +33,8 @@ export function EventDetail() {
         <Link to="/console/events">Events</Link> / <span className="app-mono">{id}</span>
       </Breadcrumb>
 
-      {isLoading && <p>Loading…</p>}
-      {isError && <p style={{ color: "var(--color-danger)" }}>Failed to load event: {(error as Error).message}</p>}
+      {isLoading && <LoadingState />}
+      {isError && <ErrorState message={`Failed to load event: ${(error as Error).message}`} />}
 
       {data && (
         <>

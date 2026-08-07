@@ -7,11 +7,15 @@ import { useBackend } from "../../lib/backend";
 import { Badge } from "../../design/Badge";
 import { Button } from "../../design/Button";
 import { Card } from "../../design/Card";
+import { ErrorState } from "../../design/ErrorState";
+import { LoadingState } from "../../design/LoadingState";
 import { Modal } from "../../design/Modal";
 import "../../design/Table.css";
 import { formatPercent, formatRelativeTime } from "../../lib/format";
 import { ActionErrorBanner, RevealedSecretModal, ResumeDisclosureModal } from "./EndpointActionModals";
 import { useEndpointActions } from "./useEndpointActions";
+import { ReplayForm, ReplayResultModal } from "./ReplayModals";
+import { useReplayAction } from "./useReplayAction";
 
 export function Endpoints() {
   const client = useApiClient();
@@ -41,6 +45,8 @@ export function Endpoints() {
     setActionError,
   } = useEndpointActions([queryKey]);
 
+  const { replayTarget, setReplayTarget, replayResult, setReplayResult, replayMutation } = useReplayAction([queryKey]);
+
   const registerMutation = useMutation({
     mutationFn: (input: { url: string; event_types: string[] }) => client!.registerEndpoint(input),
     onSuccess: (endpoint: RegisterEndpointResponse) => {
@@ -61,8 +67,8 @@ export function Endpoints() {
         </Button>
       </div>
 
-      {isLoading && <p>Loading…</p>}
-      {isError && <p style={{ color: "var(--color-danger)" }}>Failed to load endpoints: {(error as Error).message}</p>}
+      {isLoading && <LoadingState />}
+      {isError && <ErrorState message={`Failed to load endpoints: ${(error as Error).message}`} />}
       {actionError && <ActionErrorBanner message={actionError} onDismiss={() => setActionError(null)} />}
 
       {data && data.endpoints.length === 0 && (
@@ -94,7 +100,11 @@ export function Endpoints() {
                   onPause={() => pauseMutation.mutate(endpoint.id)}
                   onResume={() => resumeMutation.mutate(endpoint.id)}
                   onRotate={() => rotateMutation.mutate({ id: endpoint.id, url: endpoint.url })}
-                  busy={busyEndpointId === endpoint.id}
+                  onReplay={() => setReplayTarget({ id: endpoint.id, url: endpoint.url })}
+                  busy={
+                    busyEndpointId === endpoint.id ||
+                    (replayMutation.isPending && replayMutation.variables?.endpointId === endpoint.id)
+                  }
                 />
               ))}
             </tbody>
@@ -114,6 +124,16 @@ export function Endpoints() {
 
       {revealedSecret && <RevealedSecretModal secret={revealedSecret} onClose={() => setRevealedSecret(null)} />}
       {resumeDisclosure && <ResumeDisclosureModal result={resumeDisclosure} onClose={() => setResumeDisclosure(null)} />}
+      {replayTarget && (
+        <ReplayForm
+          endpointUrl={replayTarget.url}
+          onClose={() => setReplayTarget(null)}
+          submitting={replayMutation.isPending}
+          error={replayMutation.isError ? (replayMutation.error as Error).message : null}
+          onSubmit={(range) => replayMutation.mutate({ endpointId: replayTarget.id, ...range })}
+        />
+      )}
+      {replayResult && <ReplayResultModal result={replayResult} onClose={() => setReplayResult(null)} />}
     </div>
   );
 }
@@ -123,12 +143,14 @@ function EndpointRow({
   onPause,
   onResume,
   onRotate,
+  onReplay,
   busy,
 }: {
   endpoint: EndpointWithHealth;
   onPause: () => void;
   onResume: () => void;
   onRotate: () => void;
+  onReplay: () => void;
   busy: boolean;
 }) {
   return (
@@ -160,6 +182,9 @@ function EndpointRow({
           )}
           <Button onClick={onRotate} disabled={busy}>
             Rotate secret
+          </Button>
+          <Button onClick={onReplay} disabled={busy}>
+            Replay…
           </Button>
         </div>
       </td>
