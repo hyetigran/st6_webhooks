@@ -30,7 +30,7 @@ hasn't started.
     ticket: ADR-001's whole reason for building Go was to measure *real* multi-core behavior, and
     a single-threaded Go worker would never exercise that for the eventual `#14` primary-build
     load comparison.
-  - Verified: 20 new tests all green on first run against real Postgres + real `httptest`
+  - Verified: 39 new tests all green on first run against real Postgres + real `httptest`
     receivers, live e2e delivery to httpbin.org, and a live concurrency check (5 endpoints × 5
     events, multiple simultaneous `in_flight` deliveries observed mid-run — real parallelism, not
     just a fast sequential loop).
