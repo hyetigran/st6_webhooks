@@ -72,6 +72,19 @@ not a replacement for it.
   Node-contract divergences (401-vs-404 on unauthenticated+unmatched paths; whitespace validation
   stricter than Node's zod schemas) — see `activeContext.md` for detail. Go's Postgres runs on
   port 5533, API on 8090.
+- **Go — publish & async expansion** (`#23`): `POST /events` (Idempotency-Key idempotency, ON
+  CONFLICT + fallback SELECT — same bug class as Node's `REVIEW.md` F-11) and
+  `internal/worker.RunExpansionCycle` (per-tenant `pg_try_advisory_xact_lock` serialization per
+  `docs/adr/0001`, correcting the ticket's stale `FOR UPDATE SKIP LOCKED` wording the same way
+  Node's `#17` did). New `go/cmd/worker` poll-loop entrypoint (mirrors `node/src/worker.ts`;
+  currently just expansion). `go/Makefile` added (`typecheck`/`build`/`test`, the latter running
+  `go test -p 1 ./...` — required, since Go packages' tests share one Postgres database and
+  default cross-package parallelism flakes otherwise, a real bug found while verifying this
+  ticket). `internal/testsupport` holds fixtures shared across `internal/api`/`internal/worker`'s
+  test packages. `/code-review` found and fixed a real bug: `payload: null` bypassed validation
+  (`json.Unmarshal` into a map silently accepts JSON `null`; fixed by decoding into `any` and
+  type-asserting to `map[string]any`). Live-verified end to end with real spawned API + worker
+  processes.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -88,11 +101,12 @@ Compose deployment. Node is done.
 
 ## What doesn't exist yet
 
-- **Go**: `#22` (schema, scaffolding, endpoint management API) is done — see "What works" above.
-  `#23`-`#27` (publish/expansion, delivery worker, replay, visibility, test suite & deployment)
-  are not yet built, mirroring Node ticket-for-ticket including every review-driven fix, not the
-  pre-review design. There's no `go/cmd/worker/` yet — `#23` needs to add one. Go's own
-  "Test suite & deployment" ticket (`#27`) must build the identical PRD §8 suite — see
+- **Go**: `#22` and `#23` (schema/scaffolding/endpoint API, publish & async expansion) are done —
+  see "What works" above. `#24`-`#27` (delivery worker, replay, visibility, test suite &
+  deployment) are not yet built, mirroring Node ticket-for-ticket including every review-driven
+  fix, not the pre-review design. `go/cmd/worker/` exists but only runs the expansion cycle —
+  `#24` extends its poll loop with delivery. Go's own "Test suite & deployment" ticket (`#27`)
+  must build the identical PRD §8 suite — see
   `activeContext.md`'s "What just happened" for the full shape `#21` established (`make test`/
   `properties`/`chaos`/`load`/`verify`, real spawned processes/signals for chaos, real spawned
   api/worker for load).
@@ -185,3 +199,21 @@ Compose deployment. Node is done.
   reliable observation window, while every subsequent request responds normally — rather than
   making every request slow (which can itself blow past a short timeout and produce a
   different, unintended failure mode).
+- **`go test ./...` runs different packages' test binaries in parallel by default** — Go's
+  within-package test ordering is sequential (matches `node/vitest.config.ts`'s
+  `fileParallelism: false` need), but *across* packages, `go test ./...` builds and runs each
+  package's tests concurrently unless told otherwise. Found in Go's `#23`: `internal/api` and
+  `internal/worker`'s tests both `TRUNCATE ... RESTART IDENTITY CASCADE` the same shared
+  `webhooks_go_test` database in their fixtures, and running them in parallel let one package's
+  `TRUNCATE` wipe rows another package's test had just inserted, producing intermittent foreign-
+  key-violation and assertion failures. Fix: `go test -p 1 ./...` (wired into `go/Makefile`'s
+  `test` target — always use `make test`, not bare `go test ./...`, whenever the test database is
+  shared across packages this way). This will recur as more `go/internal/*` packages grow tests.
+- **`json.Unmarshal` into a `map[string]T` does not reject JSON `null`** — it's documented Go
+  behavior: `null` unmarshals into a map destination as a silent no-op (nil map, no error), which
+  is indistinguishable from "the field was never set." A validation check written as
+  `json.Unmarshal(raw, &someMap) != nil` (i.e. "does it error") will therefore *accept*
+  `{"field": null}`, which is usually wrong when the intent is "field must be an object" (found
+  in Go's `#23`, diverging from Node's `z.record(z.unknown())`, which does reject `null`). Fix:
+  decode into `any` first and type-assert the result to `map[string]any` — JSON `null` becomes a
+  nil `interface{}`, which correctly fails that assertion, distinguishing it from a real object.
