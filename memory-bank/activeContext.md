@@ -6,34 +6,35 @@ issue #1) and `git log`, then fix this file.
 
 ## Current phase
 
-**Both backend tracks are done; the frontend track (`#28-30`) is underway.** `#28` (API client +
-endpoint management UI) is done. `#29`/`#30` remain before the whole map is done, plus the
-primary-build designation synthesis step.
+**Both backend tracks are done; the frontend track (`#28-30`) is underway.** `#28`/`#29` are
+done. Only `#30` remains before the whole map is done, plus the primary-build designation
+synthesis step.
 
 ## What just happened (most recent session)
 
-- **`#28` — Frontend: API client & endpoint management UI built and merged** (MR !13 + a
-  follow-up code-review-fix commit, branch `28-frontend-api-client-endpoint-ui`, off an
-  up-to-date `main` after `#27`'s merge) — the frontend track's foundation ticket. Full mechanism
-  detail lives in `progress.md`'s "What works," not repeated here.
-  - Scaffolded `frontend/` (Vite + React + TS + TanStack Query + React Router). TDD'd the typed
-    API client against issue #13's contract. Built PRD §7 surface 1, a runtime backend switcher,
-    and the landing page (agreed bonus scope) — design closely follows the pasted mockup, tokens
-    extracted via computed-style inspection of its live-rendered pages, not eyeballed.
-  - Found and fixed two real bugs while live-verifying against both real backends in an actual
-    browser (not curl): neither backend had CORS configured at all (the first genuine
-    cross-origin client either ever saw), and a TanStack Query retry/refetchInterval interaction
-    could hide a persistent error in permanent pending state — see `progress.md`'s gotchas.
-  - `/code-review`: Spec axis found zero issues. Standards axis found a data clump, duplicated
-    query-building logic, and silent pause/resume/rotate failures — all fixed in a follow-up
-    commit, re-verified live against both backends before merging.
+- **`#29` — Frontend: event/delivery detail & endpoint queue views built and merged** (MR !14 +
+  a follow-up code-review-fix commit, branch `29-frontend-event-delivery-queue-views`, off an
+  up-to-date `main` after `#28`'s merge). Full mechanism detail lives in `progress.md`'s "What
+  works," not repeated here.
+  - Built PRD §7 surfaces 2-4 (event detail, delivery detail — "the primary screen," endpoint
+    queue with a real halted-head highlight) plus the Events search list. Deliberately did not
+    fabricate the mockup's "what we sent" header/signature preview since the real API doesn't
+    return that data — grounded every field in the actual response shape instead.
+  - Extracted `useEndpointActions`/`EndpointActionModals` (shared across the endpoints list and
+    the new endpoint-detail view) proactively, before this ticket could triple that logic.
+  - `/code-review`: both axes found real issues — Standards found duplicated
+    `deliveryTone`/`Field`/`Breadcrumb`/next-attempt-display logic across the three new pages and
+    a genuine `formatRelativeTime` bug (future timestamps read "0s ago" instead of "in Xs");
+    Spec found the head-highlight wasn't actually a highlight and the interactive resume flow had
+    leaked into `#29` when it's `#30`'s explicit scope. All fixed in a follow-up commit,
+    re-verified live against both backends before merging.
 
 ## Next steps
 
-- `#29` — Frontend: event/delivery detail & endpoint queue views (PRD §7 surfaces 2-4), blocked
-  by `#28` (now satisfied) — builds directly on `#28`'s API client, design system, and
-  backend-switcher/auth plumbing.
-- `#30` — Frontend: replay UI & polish, blocked by `#28`+`#29`.
+- `#30` — Frontend: replay UI & polish, blocked by `#28`+`#29` (now both satisfied) — builds the
+  replay-trigger UI, integrates the resume-from-halted flow into `#29`'s endpoint queue view
+  (deliberately deferred there), and adds an Overview dashboard home page plus a
+  loading/error/empty-state polish pass across every view.
 - **Primary-build designation** (ticket `#14`'s decision) can now actually happen — both stacks
   have real `make load` evidence (`evidence/load/` for Node, `evidence/go/load/` for Go). Nobody
   has run the comparison yet; this is a synthesis step, not a new ticket, likely worth doing once

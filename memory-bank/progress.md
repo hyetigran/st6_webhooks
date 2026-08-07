@@ -140,6 +140,24 @@ not a replacement for it.
   inspection of its live-rendered pages, not eyeballed — also built the marketing landing page as
   agreed bonus scope beyond PRD §7's 4 surfaces. Live-verified end to end in a real browser against
   both real running backends: registered/paused/resumed/rotated an endpoint through each.
+- **Frontend — event/delivery detail & endpoint queue views** (`#29`): PRD §7 surfaces 2-4.
+  `frontend/src/pages/console/EventDetail.tsx` (payload + fan-out table), `DeliveryDetail.tsx`
+  ("the primary screen" — attempt timeline with real timestamps/durations/response bodies, last
+  response, why still outstanding via `outstandingReason`, `blocked_on_delivery_id` link, next
+  attempt), `EndpointDetail.tsx` (ordered queue, head row gets a real `--color-accent-100`
+  background tint specifically when `endpoint.status === 'halted'`, per-row "blocked on" links),
+  plus `Events.tsx` (search list, necessary plumbing to reach event detail). Every field is
+  grounded in the real API response shape — no fabricated request/signature preview, unlike the
+  reference mockup's flourish. `useEndpointActions`/`EndpointActionModals`
+  (`frontend/src/pages/console/`) extracted proactively to share pause/rotate mutations and their
+  modals between the endpoints list (`#28`) and this ticket's new endpoint-detail view (resume is
+  deliberately NOT wired into `EndpointDetail.tsx` — that integration is `#30`'s explicit scope).
+  Shared display helpers: `lib/deliveryDisplay.ts` (`deliveryTone`, `nextAttemptDisplay`),
+  `design/Field.tsx`, `design/Breadcrumb.tsx`. Live-verified end to end against both real running
+  backends: a real event published, expanded, and delivered against httpbin.org (which returned
+  genuine 503s during testing — real retry/backoff data), followed through every new view
+  including a genuinely halted endpoint's Resume flow (from the list) showing the correct R-14
+  disclosure with the real failed delivery's ID.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -156,9 +174,9 @@ real external infrastructure (httpbin.org, postman-echo.com), real historical da
 
 ## What doesn't exist yet
 
-- **Frontend**: `#28` (API client + endpoint management UI) is done — see "What works" above.
-  `#29` (event/delivery detail, endpoint queue) and `#30` (replay UI, resume disclosure, polish)
-  remain, both buildable now against `#28`'s API client/design system/backend-switcher plumbing.
+- **Frontend**: `#28`/`#29` are done — see "What works" above. Only `#30` (replay-trigger UI, the
+  resume-from-halted flow integrated into `#29`'s endpoint queue view, an Overview dashboard home
+  page, and a loading/error/empty-state polish pass) remains.
 - **`README.md`**: the *final submission* root version is still not started — needs primary-
   build designation (`#14`). `node/README.md` (owned by `#21`) and `go/README.md` (owned by
   `#27`) are both done, each a real clone-to-run guide for its own stack; the root `README.md`
@@ -366,6 +384,16 @@ real external infrastructure (httpbin.org, postman-echo.com), real historical da
   `ApiError`'s `status` and never retries 4xx (`error.status >= 400 && error.status < 500`) —
   correctness bugs the client can't fix by retrying shouldn't retry. **Any future query with
   both retry and a refetch interval needs this same policy**, not just the one that surfaced it.
+- **A "relative time" formatter that only ever expects past timestamps silently breaks on a
+  future one** — `frontend/src/lib/format.ts`'s `formatRelativeTime` originally clamped a
+  negative delta (`Math.max(0, ...)`) since its only caller (`#28`'s `oldest_pending_at`) was
+  always in the past. `#29` reused it for `next_attempt_at`, a *scheduled* (future) time for any
+  pending/in_flight delivery — every such row silently rendered "0s ago" instead of "in Xs," not
+  caught by typechecking or the existing test suite since the function's signature didn't change,
+  only its actual input range did. Caught by `/code-review`, not by hand. Fixed by branching on
+  the delta's sign (`isFuture ? "in X" : "X ago"`) — **any date-relative formatter needs both
+  directions covered from the start**, not just whichever direction its first caller happened to
+  need.
 - **Go's dynamic-WHERE-clause routes should build the query string by direct accumulation
   (`query += fmt.Sprintf(" AND ...", ...)`), not a `conditions []string` + `strings.Join` slice**
   — the latter mirrors Node's own shape (`node/src/routes/events.ts`'s `conditions` array) closely
