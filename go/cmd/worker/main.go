@@ -8,9 +8,8 @@
 // claim/complete/expansion query is already safe under concurrent
 // execution (row locks, per-tenant advisory locks, lease fencing) — no
 // extra coordination between goroutines is needed beyond sharing one
-// pgxpool.Pool and one outbound *http.Transport. Expansion (#23) and
-// delivery (#24) so far; replay expansion (#25) joins this same loop as
-// its ticket lands.
+// pgxpool.Pool and one outbound *http.Transport. Expansion (#23), delivery
+// (#24), and replay expansion (#25).
 package main
 
 import (
@@ -84,6 +83,12 @@ func pollLoop(ctx context.Context, pool *pgxpool.Pool, cfg worker.DeliveryConfig
 
 		if did, err := worker.RunExpansionCycle(ctx, pool); err != nil {
 			log.Printf("expansion cycle failed: %v", err)
+		} else {
+			didWork = didWork || did
+		}
+
+		if did, err := worker.RunReplayExpansionCycle(ctx, pool); err != nil {
+			log.Printf("replay expansion cycle failed: %v", err)
 		} else {
 			didWork = didWork || did
 		}
