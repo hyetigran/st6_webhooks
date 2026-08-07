@@ -167,3 +167,79 @@ func CreateDelivery(t *testing.T, pool *pgxpool.Pool, tenantID, endpointID strin
 	require.NoError(t, err)
 	return id, eventID
 }
+
+// EventOptions customizes CreateEvent's fixture. Every field is optional;
+// zero values fall back to a sensible default.
+type EventOptions struct {
+	Type      string
+	Payload   string // raw JSON; defaults to {"hello":"world"}
+	Status    string
+	CreatedAt *time.Time
+}
+
+// CreateEvent inserts an event fixture directly (bypasses publish) — read-
+// API tests need control over fields (created_at, in particular) publish
+// doesn't expose. Mirrors node/test/fixtures.ts's createEvent.
+func CreateEvent(t *testing.T, pool *pgxpool.Pool, tenantID string, opts EventOptions) string {
+	t.Helper()
+
+	eventType := opts.Type
+	if eventType == "" {
+		eventType = "order.created"
+	}
+	payload := opts.Payload
+	if payload == "" {
+		payload = `{"hello":"world"}`
+	}
+	status := opts.Status
+	if status == "" {
+		status = "expanded"
+	}
+
+	var id string
+	err := pool.QueryRow(context.Background(),
+		`INSERT INTO events (tenant_id, idempotency_key, type, payload, status, created_at)
+		 VALUES ($1, $2, $3, $4, $5, COALESCE($6, now()))
+		 RETURNING id`,
+		tenantID, "event-fixture-"+uuid.NewString(), eventType, payload, status, opts.CreatedAt,
+	).Scan(&id)
+	require.NoError(t, err)
+	return id
+}
+
+// AttemptOptions customizes CreateAttempt's fixture. Every field is
+// optional; zero values fall back to a sensible default.
+type AttemptOptions struct {
+	AttemptNumber         int
+	SentAt                *time.Time
+	ResponseStatus        *int
+	ResponseBodyTruncated *string
+	DurationMs            *int
+	ErrorClass            *string
+}
+
+// CreateAttempt inserts an attempt fixture directly for a given delivery.
+// Mirrors node/test/fixtures.ts's createAttempt.
+func CreateAttempt(t *testing.T, pool *pgxpool.Pool, deliveryID string, opts AttemptOptions) string {
+	t.Helper()
+
+	attemptNumber := opts.AttemptNumber
+	if attemptNumber == 0 {
+		attemptNumber = 1
+	}
+	sentAt := opts.SentAt
+	if sentAt == nil {
+		now := time.Now()
+		sentAt = &now
+	}
+
+	var id string
+	err := pool.QueryRow(context.Background(),
+		`INSERT INTO attempts (delivery_id, attempt_number, sent_at, response_status, response_body_truncated, duration_ms, error_class)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING id`,
+		deliveryID, attemptNumber, sentAt, opts.ResponseStatus, opts.ResponseBodyTruncated, opts.DurationMs, opts.ErrorClass,
+	).Scan(&id)
+	require.NoError(t, err)
+	return id
+}

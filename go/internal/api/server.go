@@ -56,6 +56,10 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /endpoints/{id}/secret/rotate", s.rotateSecret)
 	protected.HandleFunc("POST /events", s.publishEvent)
 	protected.HandleFunc("POST /endpoints/{id}/replays", s.createReplay)
+	protected.HandleFunc("GET /events", s.listEvents)
+	protected.HandleFunc("GET /events/{id}", s.getEvent)
+	protected.HandleFunc("GET /deliveries/{id}", s.getDelivery)
+	protected.HandleFunc("GET /endpoints/{id}/deliveries", s.listEndpointDeliveries)
 	protected.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "Not found")
 	})
