@@ -120,6 +120,7 @@ type DeliveryOptions struct {
 	EventType     string
 	Payload       string // raw JSON; defaults to {"hello":"world"}
 	NextAttemptAt *time.Time
+	CreatedAt     *time.Time
 	State         string
 }
 
@@ -158,10 +159,10 @@ func CreateDelivery(t *testing.T, pool *pgxpool.Pool, tenantID, endpointID strin
 	require.NoError(t, err)
 
 	err = pool.QueryRow(ctx,
-		`INSERT INTO deliveries (event_id, endpoint_id, state, next_attempt_at)
-		 VALUES ($1, $2, $3, COALESCE($4, now()))
+		`INSERT INTO deliveries (event_id, endpoint_id, state, next_attempt_at, created_at)
+		 VALUES ($1, $2, $3, COALESCE($4, now()), COALESCE($5, now()))
 		 RETURNING id`,
-		eventID, endpointID, state, opts.NextAttemptAt,
+		eventID, endpointID, state, opts.NextAttemptAt, opts.CreatedAt,
 	).Scan(&id)
 	require.NoError(t, err)
 	return id, eventID
