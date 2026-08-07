@@ -66,11 +66,15 @@ type SeqCursor struct {
 	Seq int64 `json:"seq"`
 }
 
+// EncodeSeqCursor opaquely encodes a cursor for the "next_cursor" response
+// field / "after" query param round trip.
 func EncodeSeqCursor(c SeqCursor) string {
 	raw, _ := json.Marshal(c)
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
+// DecodeSeqCursor returns (SeqCursor{}, false) for anything malformed —
+// callers treat a bad cursor as "no cursor" rather than a hard error.
 func DecodeSeqCursor(raw string) (SeqCursor, bool) {
 	decoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
@@ -78,6 +82,11 @@ func DecodeSeqCursor(raw string) (SeqCursor, bool) {
 	}
 	var c SeqCursor
 	if err := json.Unmarshal(decoded, &c); err != nil {
+		return SeqCursor{}, false
+	}
+	// deliveries.seq is a BIGSERIAL starting at 1 — a non-positive value
+	// can never be a real cursor, only malformed/garbage input.
+	if c.Seq <= 0 {
 		return SeqCursor{}, false
 	}
 	return c, true

@@ -98,12 +98,11 @@ func (s *Server) getDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// make(..., len(latestFirst)) always yields a non-nil slice, even for
+	// len 0, so this already serializes as JSON [] rather than null.
 	attempts := make([]attemptJSON, len(latestFirst))
 	for i, a := range latestFirst {
 		attempts[len(latestFirst)-1-i] = a
-	}
-	if attempts == nil {
-		attempts = []attemptJSON{}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, struct {

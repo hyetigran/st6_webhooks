@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -118,42 +117,34 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	args := []any{auth.TenantID(r)}
-	conditions := []string{"e.tenant_id = $1"}
+	query := "SELECT e.id, e.type, e.payload, e.status, e.created_at FROM events e WHERE e.tenant_id = $1"
 
 	if id := r.URL.Query().Get("id"); id != "" {
 		args = append(args, id)
-		conditions = append(conditions, fmt.Sprintf("e.id = $%d", len(args)))
+		query += fmt.Sprintf(" AND e.id = $%d", len(args))
 	}
 	if eventType := r.URL.Query().Get("type"); eventType != "" {
 		args = append(args, eventType)
-		conditions = append(conditions, fmt.Sprintf("e.type = $%d", len(args)))
+		query += fmt.Sprintf(" AND e.type = $%d", len(args))
 	}
 	if from := r.URL.Query().Get("from"); from != "" {
 		args = append(args, from)
-		conditions = append(conditions, fmt.Sprintf("e.created_at >= $%d", len(args)))
+		query += fmt.Sprintf(" AND e.created_at >= $%d", len(args))
 	}
 	if to := r.URL.Query().Get("to"); to != "" {
 		args = append(args, to)
-		conditions = append(conditions, fmt.Sprintf("e.created_at <= $%d", len(args)))
+		query += fmt.Sprintf(" AND e.created_at <= $%d", len(args))
 	}
 	if endpointID := r.URL.Query().Get("endpoint_id"); endpointID != "" {
 		args = append(args, endpointID)
-		conditions = append(conditions, fmt.Sprintf("EXISTS (SELECT 1 FROM deliveries d WHERE d.event_id = e.id AND d.endpoint_id = $%d)", len(args)))
+		query += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM deliveries d WHERE d.event_id = e.id AND d.endpoint_id = $%d)", len(args))
 	}
 	if hasCursor {
 		args = append(args, cursor.CreatedAt, cursor.ID)
-		conditions = append(conditions, fmt.Sprintf("(e.created_at, e.id) < ($%d, $%d)", len(args)-1, len(args)))
+		query += fmt.Sprintf(" AND (e.created_at, e.id) < ($%d, $%d)", len(args)-1, len(args))
 	}
 	args = append(args, limit+1)
-
-	query := fmt.Sprintf(
-		`SELECT e.id, e.type, e.payload, e.status, e.created_at
-		 FROM events e
-		 WHERE %s
-		 ORDER BY e.created_at DESC, e.id DESC
-		 LIMIT $%d`,
-		strings.Join(conditions, " AND "), len(args),
-	)
+	query += fmt.Sprintf(" ORDER BY e.created_at DESC, e.id DESC LIMIT $%d", len(args))
 
 	rows, err := s.pool.Query(r.Context(), query, args...)
 	if fail(w, "listEvents: query", err, "") {
