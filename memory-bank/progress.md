@@ -395,19 +395,27 @@ yet) and the loose ends already tracked below (`replays.status` polling exposure
   way it could against cookie-based auth. **Any future third stack would need the identical
   fix** — this isn't backend-specific, it's inherent to "a browser-based SPA calls this API from
   a different origin."
-- **TanStack Query's default `retry` (3 attempts, retries every failure including 4xx) combined
-  with a query's own `refetchInterval` can hide a persistently-failing query's error from the UI
-  indefinitely** — found in `#28` switching the frontend's backend selector to a backend the
-  signed-in API key was never issued for (a genuine 401, not transient). `useQuery`'s
-  `isLoading` (v5: `status === 'pending' && fetchStatus === 'fetching'`) goes false during each
-  retry's backoff *pause*, but `isError` doesn't go true until retries exhaust — and a
-  concurrent `refetchInterval` firing can keep nudging the query back into that pending/paused
-  limbo before retries ever exhaust, so a naive `{isLoading ? ... : isError ? ... : data ...}`
-  render can show *nothing* for a wrong-API-key case, not even after 10+ seconds. Fixed with a
-  global `QueryClient` `retry` policy (`frontend/src/main.tsx`) that inspects the thrown
-  `ApiError`'s `status` and never retries 4xx (`error.status >= 400 && error.status < 500`) —
-  correctness bugs the client can't fix by retrying shouldn't retry. **Any future query with
-  both retry and a refetch interval needs this same policy**, not just the one that surfaced it.
+- **TanStack Query's `retry` and `refetchInterval` should never be combined — the fix landed in
+  `#28` (never retry 4xx) was a partial patch, not the real fix; the actual bug wasn't specific
+  to 4xx at all.** First found in `#28` switching the backend selector to a key the backend never
+  issued (a persistent 401): a concurrent `refetchInterval` firing during a retry's backoff pause
+  can leave `isLoading`/`isError` both false indefinitely, so the UI shows nothing. The `#28` fix
+  (skip retrying 4xx specifically) papered over that one case but left the general mechanism
+  intact — confirmed broken again in a later whole-track `/code-review` pass, testing a
+  persistent **5xx** (not a bad key — a route erroring on a malformed ID) on
+  `DeliveryDetail.tsx`. Direct instrumentation of the `retry` callback proved the actual root
+  cause: `failureCount` was resetting to `0` on *every* invocation instead of incrementing (three
+  consecutive real failures each logged `failureCount: 0`), because an interval-triggered refetch
+  arriving mid-backoff restarts the query's attempt sequence from scratch rather than continuing
+  it — so `failureCount < 2` was permanently true and the retry limit was never reached,
+  regardless of status code. **Real fix**: `retry: false` app-wide
+  (`frontend/src/main.tsx`) — every query here already has a `refetchInterval` (ADR-008's
+  polling), which is itself a natural retry; a failed fetch shows its error immediately and
+  self-heals on the next poll tick 2-5s later, with no separate retry mechanism left to race the
+  interval at all. **Any future app combining polling (`refetchInterval`) with TanStack Query's
+  own `retry` needs `retry: false`, full stop — there's no status-code-based patch that fixes
+  this, since the failure mode isn't about which errors get retried, it's that retries can't
+  reliably count their own attempts once a refetch interval is in the mix.**
 - **A "relative time" formatter that only ever expects past timestamps silently breaks on a
   future one** — `frontend/src/lib/format.ts`'s `formatRelativeTime` originally clamped a
   negative delta (`Math.max(0, ...)`) since its only caller (`#28`'s `oldest_pending_at`) was

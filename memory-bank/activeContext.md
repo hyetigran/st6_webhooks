@@ -27,6 +27,18 @@ steps") — not a ticket, a decision-application step using data that now exists
     `LoadingState`/`ErrorState` components, applied everywhere). Standards found a silent
     pagination-truncation gap, a `busy`-state composition gap, a missed query invalidation, and a
     `{id,url}` data clump. All fixed in a follow-up commit, re-verified live before merging.
+- **Standalone `/code-review` against the whole frontend track** (`89f6e93...HEAD`, all of
+  `#28`+`#29`+`#30` combined, at the user's request after `#30` merged) — caught issues invisible
+  to any single ticket's own review: a duplicated input-style object (extracted
+  `design/TextInput.tsx`), two competing row-click patterns (reconciled), a fabricated "24h"
+  label on a field that isn't time-windowed, the endpoint-history filter the API client had
+  supported since `#28` but no view ever used (wired up), and `DeliveryDetail.tsx`'s breadcrumb
+  going blank on error since it needed fetched data to build its links. Fixing that last one
+  surfaced a real, separate, more serious bug while live-verifying: a persistent 5xx (not just a
+  bad API key) left the page in permanent limbo. Root-caused via direct instrumentation — see
+  `progress.md`'s gotchas for the corrected, complete fix (`retry: false` app-wide; the earlier
+  `#28` fix was a partial patch that only masked the 4xx case). Committed straight to `main` (no
+  ticket/MR — this wasn't ticket-scoped work).
 
 ## Next steps
 
