@@ -129,10 +129,6 @@ const RECEIVERS = [
 const TICK_MS = 900;
 const BAND_MULTIPLIER: Record<Band, number> = { Quiet: 1, Moderate: 3, Flood: 9 };
 
-function boxCenter(box: Box): { x: number; y: number } {
-  return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
-}
-
 function SegGroup<T extends string>({
   label,
   options,
@@ -174,6 +170,29 @@ function SegGroup<T extends string>({
         ))}
       </div>
     </div>
+  );
+}
+
+/** Marks a box as the pipeline's currently-active stage. Rendered as a child
+ * of that exact box (not a separately-positioned element animating its way
+ * across the diagram), so it can never visually land somewhere other than
+ * the box whose border is also highlighted — both come from the same
+ * `stage === i` check in the same render. */
+function PulseDot() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        position: "absolute",
+        top: 8,
+        right: 8,
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: "var(--color-accent)",
+        animation: "gr-pulse 1.4s ease-in-out infinite",
+      }}
+    />
   );
 }
 
@@ -219,13 +238,6 @@ function PipelineDiagram() {
     setDelivered(0);
     setStage(0);
   }, [runtime, band, scenarioIndex]);
-
-  const activeReceiver = RECEIVERS[receiverIndex]!;
-  const activeBox: Box =
-    stage < PIPELINE_NODES.length
-      ? PIPELINE_NODES[stage]!
-      : { left: RECEIVER_LEFT, top: activeReceiver.top, width: RECEIVER_WIDTH, height: RECEIVER_HEIGHT };
-  const dot = boxCenter(activeBox);
 
   const scenario = SCENARIOS[scenarioIndex]!;
   const queueDepth = Math.max(0, Math.round(bandMultiplier * 3 + Math.sin(tickCount.current / 2) * bandMultiplier));
@@ -297,6 +309,7 @@ function PipelineDiagram() {
                 borderColor: stage === i ? "var(--color-accent)" : "var(--color-divider)",
               }}
             >
+              {stage === i && <PulseDot />}
               <div style={{ fontFamily: "var(--font-heading)", fontSize: 14, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.1 }}>
                 {n.label}
               </div>
@@ -321,6 +334,7 @@ function PipelineDiagram() {
                 borderColor: stage === PIPELINE_NODES.length && receiverIndex === i ? "var(--color-accent)" : "var(--color-divider)",
               }}
             >
+              {stage === PIPELINE_NODES.length && receiverIndex === i && <PulseDot />}
               <div style={{ fontFamily: "var(--font-heading)", fontSize: 14, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.1 }}>
                 {r.name}
               </div>
@@ -332,22 +346,6 @@ function PipelineDiagram() {
               </div>
             </Card>
           ))}
-
-          <div
-            aria-hidden
-            style={{
-              position: "absolute",
-              left: `${dot.x}%`,
-              top: `${dot.y}%`,
-              width: 10,
-              height: 10,
-              marginLeft: -5,
-              marginTop: -5,
-              borderRadius: "50%",
-              background: "var(--color-accent)",
-              transition: `left ${TICK_MS * 0.9}ms linear, top ${TICK_MS * 0.9}ms linear`,
-            }}
-          />
         </div>
       </div>
 
