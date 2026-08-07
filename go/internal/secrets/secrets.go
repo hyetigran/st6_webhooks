@@ -8,6 +8,8 @@ import (
 	"fmt"
 )
 
+// Generate returns a high-entropy "<prefix>_<48 hex chars>" token — used for
+// both tenant API keys and endpoint signing secrets.
 func Generate(prefix string) string {
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {

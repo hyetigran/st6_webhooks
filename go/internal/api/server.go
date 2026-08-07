@@ -21,6 +21,9 @@ type Server struct {
 	secretRotation      config.SecretRotationConfig
 }
 
+// NewServer holds the dependencies every handler needs: the DB pool, the
+// AES-256-GCM key signing secrets are encrypted with, and the rotation
+// overlap window (docs/adr/0003).
 func NewServer(pool *pgxpool.Pool, secretEncryptionKey []byte, secretRotation config.SecretRotationConfig) *Server {
 	return &Server{
 		pool:                pool,
@@ -29,6 +32,8 @@ func NewServer(pool *pgxpool.Pool, secretEncryptionKey []byte, secretRotation co
 	}
 }
 
+// Handler builds the full route table, ready to pass to http.ListenAndServe
+// or httptest.NewServer.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
@@ -36,18 +41,24 @@ func (s *Server) Handler() http.Handler {
 		httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
 
-	requireTenant := auth.RequireTenant(s.pool)
-	mux.Handle("POST /endpoints", requireTenant(http.HandlerFunc(s.registerEndpoint)))
-	mux.Handle("GET /endpoints", requireTenant(http.HandlerFunc(s.listEndpoints)))
-	mux.Handle("GET /endpoints/{id}", requireTenant(http.HandlerFunc(s.getEndpoint)))
-	mux.Handle("POST /endpoints/{id}/pause", requireTenant(http.HandlerFunc(s.pauseEndpoint)))
-	mux.Handle("POST /endpoints/{id}/resume", requireTenant(http.HandlerFunc(s.resumeEndpoint)))
-	mux.Handle("POST /endpoints/{id}/secret/rotate", requireTenant(http.HandlerFunc(s.rotateSecret)))
-
-	// Catch-all: any path none of the above patterns matched.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// Everything except /healthz sits behind requireTenant — including an
+	// unmatched path, mirroring app.ts's `app.use(requireTenant,
+	// endpointsRouter, ...)` running before its final 404 handler. An
+	// unauthenticated request to an unknown route must still get 401, not
+	// 404 (which would leak whether the route exists to a caller with no
+	// valid key at all).
+	protected := http.NewServeMux()
+	protected.HandleFunc("POST /endpoints", s.registerEndpoint)
+	protected.HandleFunc("GET /endpoints", s.listEndpoints)
+	protected.HandleFunc("GET /endpoints/{id}", s.getEndpoint)
+	protected.HandleFunc("POST /endpoints/{id}/pause", s.pauseEndpoint)
+	protected.HandleFunc("POST /endpoints/{id}/resume", s.resumeEndpoint)
+	protected.HandleFunc("POST /endpoints/{id}/secret/rotate", s.rotateSecret)
+	protected.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "Not found")
 	})
+
+	mux.Handle("/", auth.RequireTenant(s.pool)(protected))
 
 	return recoverJSON(mux)
 }

@@ -56,6 +56,44 @@ func TestRegisterEndpointRejectsInvalidBody(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+// Matches node/src/routes/endpoints.ts's zod schema (z.string().min(1)):
+// a raw length check, not a trimmed one. A whitespace-only url is NOT
+// rejected by request validation — it falls through to URL parsing instead,
+// same as Node, so the two stacks return the same error code for it.
+func TestRegisterEndpointWhitespaceOnlyURLFailsURLValidationNotBodyValidation(t *testing.T) {
+	pool := setupPool(t)
+	ts := newTestServer(t, pool)
+	_, apiKey := createTenant(t, pool)
+
+	resp := doRequest(t, http.MethodPost, ts.URL+"/endpoints", apiKey, map[string]any{
+		"url":         " ",
+		"event_types": []string{"order.created"},
+	})
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	decodeJSON(t, resp, &body)
+	require.Equal(t, "url_not_allowed", body.Error.Code)
+}
+
+// Matches node/src/routes/endpoints.ts's zod schema
+// (z.array(z.string().min(1))): each entry only needs length >= 1, so a
+// whitespace-only event type is accepted, same as Node.
+func TestRegisterEndpointAcceptsWhitespaceOnlyEventType(t *testing.T) {
+	pool := setupPool(t)
+	ts := newTestServer(t, pool)
+	_, apiKey := createTenant(t, pool)
+
+	resp := doRequest(t, http.MethodPost, ts.URL+"/endpoints", apiKey, map[string]any{
+		"url":         "https://example.com/hook",
+		"event_types": []string{" "},
+	})
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+}
+
 // R-2: registration rejects URLs that resolve to private, loopback, or
 // link-local ranges (SSRF defense).
 func TestRegisterEndpointRejectsLoopbackURL(t *testing.T) {
@@ -93,6 +131,27 @@ func TestRegisterEndpointRequiresAuth(t *testing.T) {
 		"event_types": []string{"order.created"},
 	})
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// Mirrors app.ts's middleware order: requireTenant runs before routing
+// (including the 404 fallback) for everything except /healthz — an
+// unauthenticated request to an unmapped path must still get 401, not 404,
+// so an unauthenticated caller can never distinguish "route doesn't exist"
+// from "route exists but you're not authorized."
+func TestUnauthenticatedRequestToUnknownPathIsUnauthorizedNotNotFound(t *testing.T) {
+	pool := setupPool(t)
+	ts := newTestServer(t, pool)
+
+	resp := doRequest(t, http.MethodGet, ts.URL+"/no-such-route", "", nil)
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestHealthzDoesNotRequireAuth(t *testing.T) {
+	pool := setupPool(t)
+	ts := newTestServer(t, pool)
+
+	resp := doRequest(t, http.MethodGet, ts.URL+"/healthz", "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestGetEndpointIncludesHealthFields(t *testing.T) {

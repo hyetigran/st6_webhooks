@@ -15,6 +15,8 @@ type Cursor struct {
 	ID        string `json:"id"`
 }
 
+// EncodeCursor opaquely encodes a cursor for the "next_cursor" response
+// field / "before" query param round trip.
 func EncodeCursor(c Cursor) string {
 	raw, _ := json.Marshal(c)
 	return base64.RawURLEncoding.EncodeToString(raw)
@@ -37,6 +39,8 @@ func DecodeCursor(raw string) (Cursor, bool) {
 	return c, true
 }
 
+// ParseLimit parses a "limit" query param, falling back to fallback for
+// anything empty, non-numeric, or non-positive, and capping at max.
 func ParseLimit(raw string, fallback, max int) int {
 	if raw == "" {
 		return fallback

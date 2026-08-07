@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -69,7 +70,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 			return fmt.Errorf("db: read migration %s: %w", file, err)
 		}
 
-		fmt.Printf("Applying migration %s...\n", file)
+		log.Printf("Applying migration %s...", file)
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("db: begin tx for %s: %w", file, err)
@@ -87,6 +88,6 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 	}
 
-	fmt.Println("Migrations up to date.")
+	log.Println("Migrations up to date.")
 	return nil
 }

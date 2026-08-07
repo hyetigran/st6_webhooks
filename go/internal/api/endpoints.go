@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -74,6 +73,14 @@ func serializeEndpointWithHealth(row endpointHealthRow) endpointWithHealthJSON {
 	}
 }
 
+const endpointColumns = "id, url, event_types, status, signing_secret, created_at"
+
+func scanEndpointRow(row pgx.Row) (endpointRow, error) {
+	var ep endpointRow
+	err := row.Scan(&ep.ID, &ep.URL, &ep.EventTypes, &ep.Status, &ep.SigningSecret, &ep.CreatedAt)
+	return ep, err
+}
+
 // healthSelect is the health subquery shared by GET /endpoints and
 // GET /endpoints/:id (R-25): queue depth + oldest pending delivery + recent
 // success rate over the last 50 terminal deliveries for that endpoint.
@@ -104,6 +111,23 @@ func scanEndpointHealthRow(row pgx.Row) (endpointHealthRow, error) {
 	return h, err
 }
 
+// fail writes the response for a query error: pgx.ErrNoRows becomes a 404
+// with notFoundMsg (a no-op for queries that never produce ErrNoRows, e.g.
+// count(*)), anything else becomes a logged 500. Returns true if it wrote a
+// response — callers should return immediately when it does.
+func fail(w http.ResponseWriter, logContext string, err error, notFoundMsg string) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", notFoundMsg)
+		return true
+	}
+	log.Printf("%s: %v", logContext, err)
+	httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+	return true
+}
+
 type registerRequest struct {
 	URL        string   `json:"url"`
 	EventTypes []string `json:"event_types"`
@@ -115,7 +139,12 @@ func (s *Server) registerEndpoint(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
-	if strings.TrimSpace(req.URL) == "" {
+	// Mirrors node/src/routes/endpoints.ts's zod schema exactly:
+	// z.string().min(1) / z.array(z.string().min(1)).min(1) — a raw length
+	// check, not a trimmed one, so whitespace-only values are NOT rejected
+	// here (they fail later, in validateEndpointUrl, the same way Node's
+	// does).
+	if req.URL == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "url is required")
 		return
 	}
@@ -124,7 +153,7 @@ func (s *Server) registerEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, et := range req.EventTypes {
-		if strings.TrimSpace(et) == "" {
+		if et == "" {
 			httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "event_types entries must be non-empty")
 			return
 		}
@@ -144,16 +173,13 @@ func (s *Server) registerEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := s.pool.QueryRow(r.Context(),
+	ep, err := scanEndpointRow(s.pool.QueryRow(r.Context(),
 		`INSERT INTO endpoints (tenant_id, url, event_types, signing_secret)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, url, event_types, status, signing_secret, created_at`,
+		 RETURNING `+endpointColumns,
 		auth.TenantID(r), req.URL, req.EventTypes, encrypted,
-	)
-	var ep endpointRow
-	if err := row.Scan(&ep.ID, &ep.URL, &ep.EventTypes, &ep.Status, &ep.SigningSecret, &ep.CreatedAt); err != nil {
-		log.Printf("registerEndpoint: insert: %v", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+	))
+	if fail(w, "registerEndpoint", err, "") {
 		return
 	}
 
@@ -183,9 +209,7 @@ func (s *Server) listEndpoints(w http.ResponseWriter, r *http.Request) {
 	query += fmt.Sprintf(" ORDER BY e.created_at DESC, e.id DESC LIMIT $%d", len(args))
 
 	rows, err := s.pool.Query(r.Context(), query, args...)
-	if err != nil {
-		log.Printf("listEndpoints: query: %v", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+	if fail(w, "listEndpoints: query", err, "") {
 		return
 	}
 	defer rows.Close()
@@ -193,16 +217,12 @@ func (s *Server) listEndpoints(w http.ResponseWriter, r *http.Request) {
 	var page []endpointHealthRow
 	for rows.Next() {
 		h, err := scanEndpointHealthRow(rows)
-		if err != nil {
-			log.Printf("listEndpoints: scan: %v", err)
-			httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+		if fail(w, "listEndpoints: scan", err, "") {
 			return
 		}
 		page = append(page, h)
 	}
-	if err := rows.Err(); err != nil {
-		log.Printf("listEndpoints: rows: %v", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+	if err := rows.Err(); fail(w, "listEndpoints: rows", err, "") {
 		return
 	}
 
@@ -233,41 +253,24 @@ func (s *Server) listEndpoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getEndpoint(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	row := s.pool.QueryRow(r.Context(),
+	h, err := scanEndpointHealthRow(s.pool.QueryRow(r.Context(),
 		fmt.Sprintf("SELECT %s FROM endpoints e WHERE e.id = $1 AND e.tenant_id = $2", healthSelect),
-		id, auth.TenantID(r),
-	)
-	h, err := scanEndpointHealthRow(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
-		return
-	}
-	if err != nil {
-		log.Printf("getEndpoint: %v", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+		r.PathValue("id"), auth.TenantID(r),
+	))
+	if fail(w, "getEndpoint", err, "Endpoint not found") {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, serializeEndpointWithHealth(h))
 }
 
 func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request, newStatus string) (endpointRow, bool) {
-	id := r.PathValue("id")
-	row := s.pool.QueryRow(r.Context(),
+	ep, err := scanEndpointRow(s.pool.QueryRow(r.Context(),
 		`UPDATE endpoints SET status = $1
 		 WHERE id = $2 AND tenant_id = $3
-		 RETURNING id, url, event_types, status, signing_secret, created_at`,
-		newStatus, id, auth.TenantID(r),
-	)
-	var ep endpointRow
-	err := row.Scan(&ep.ID, &ep.URL, &ep.EventTypes, &ep.Status, &ep.SigningSecret, &ep.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
-		return endpointRow{}, false
-	}
-	if err != nil {
-		log.Printf("updateStatus(%s): %v", newStatus, err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+		 RETURNING `+endpointColumns,
+		newStatus, r.PathValue("id"), auth.TenantID(r),
+	))
+	if fail(w, fmt.Sprintf("updateStatus(%s)", newStatus), err, "Endpoint not found") {
 		return endpointRow{}, false
 	}
 	return ep, true
@@ -297,9 +300,7 @@ func (s *Server) resumeEndpoint(w http.ResponseWriter, r *http.Request) {
 		`SELECT count(*) FROM deliveries WHERE endpoint_id = $1 AND state IN ('pending', 'in_flight')`,
 		ep.ID,
 	).Scan(&pendingCount)
-	if err != nil {
-		log.Printf("resumeEndpoint: pending count: %v", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+	if fail(w, "resumeEndpoint: pending count", err, "") {
 		return
 	}
 
@@ -318,9 +319,7 @@ func (s *Server) resumeEndpoint(w http.ResponseWriter, r *http.Request) {
 		 ORDER BY created_at`,
 		ep.ID,
 	)
-	if err != nil {
-		log.Printf("resumeEndpoint: skipped ids: %v", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+	if fail(w, "resumeEndpoint: skipped ids", err, "") {
 		return
 	}
 	defer rows.Close()
@@ -328,16 +327,12 @@ func (s *Server) resumeEndpoint(w http.ResponseWriter, r *http.Request) {
 	skippedIDs := []string{}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
-			log.Printf("resumeEndpoint: scan skipped id: %v", err)
-			httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+		if err := rows.Scan(&id); fail(w, "resumeEndpoint: scan skipped id", err, "") {
 			return
 		}
 		skippedIDs = append(skippedIDs, id)
 	}
-	if err := rows.Err(); err != nil {
-		log.Printf("resumeEndpoint: rows: %v", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+	if err := rows.Err(); fail(w, "resumeEndpoint: rows", err, "") {
 		return
 	}
 
@@ -373,13 +368,7 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request) {
 		 RETURNING id`,
 		overlapExpiresAt, encrypted, r.PathValue("id"), auth.TenantID(r),
 	).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
-		return
-	}
-	if err != nil {
-		log.Printf("rotateSecret: update: %v", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "Internal error")
+	if fail(w, "rotateSecret: update", err, "Endpoint not found") {
 		return
 	}
 
