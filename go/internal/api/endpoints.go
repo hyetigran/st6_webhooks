@@ -377,3 +377,81 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request) {
 		OverlapExpiresAt string `json:"overlap_expires_at"`
 	}{newSecret, overlapExpiresAt.UTC().Format(time.RFC3339Nano)})
 }
+
+// listEndpointDeliveries is §7 surface 4: ordered deliveries for one
+// endpoint, head highlighted. Ascending by seq (head first, the actionable
+// item) — deliberately the opposite direction from every other list
+// route's newest-first paging, so this uses its own after/seq-based
+// cursor (docs/adr/0007) rather than the shared before/created_at+id one:
+// reusing created_at here would hit the exact same same-endpoint tie risk
+// that column was added to avoid.
+func (s *Server) listEndpointDeliveries(w http.ResponseWriter, r *http.Request) {
+	endpointID := r.PathValue("id")
+	var foundEndpointID string
+	err := s.pool.QueryRow(r.Context(),
+		"SELECT id FROM endpoints WHERE id = $1 AND tenant_id = $2", endpointID, auth.TenantID(r),
+	).Scan(&foundEndpointID)
+	if fail(w, "listEndpointDeliveries: endpoint lookup", err, "Endpoint not found") {
+		return
+	}
+
+	limit := pagination.ParseLimit(r.URL.Query().Get("limit"), 20, 100)
+	cursor, hasCursor := pagination.SeqCursor{}, false
+	if raw := r.URL.Query().Get("after"); raw != "" {
+		cursor, hasCursor = pagination.DecodeSeqCursor(raw)
+	}
+
+	args := []any{endpointID}
+	query := `SELECT d.id, d.event_id, d.state, d.attempt_count, d.next_attempt_at, d.seq, ` + headDeliverySelect + `
+	          FROM deliveries d WHERE d.endpoint_id = $1`
+	if hasCursor {
+		args = append(args, cursor.Seq)
+		query += fmt.Sprintf(" AND d.seq > $%d", len(args))
+	}
+	args = append(args, limit+1)
+	query += fmt.Sprintf(" ORDER BY d.seq ASC LIMIT $%d", len(args))
+
+	rows, err := s.pool.Query(r.Context(), query, args...)
+	if fail(w, "listEndpointDeliveries: query", err, "") {
+		return
+	}
+	defer rows.Close()
+
+	type queueRow struct {
+		deliverySummaryRow
+		Seq int64
+	}
+	var page []queueRow
+	for rows.Next() {
+		var row queueRow
+		if err := rows.Scan(&row.ID, &row.EventID, &row.State, &row.AttemptCount, &row.NextAttemptAt, &row.Seq, &row.HeadDeliveryID); fail(w, "listEndpointDeliveries: scan", err, "") {
+			return
+		}
+		page = append(page, row)
+	}
+	if err := rows.Err(); fail(w, "listEndpointDeliveries: rows", err, "") {
+		return
+	}
+
+	hasMore := len(page) > limit
+	if hasMore {
+		page = page[:limit]
+	}
+
+	serialized := make([]deliverySummaryJSON, len(page))
+	for i, row := range page {
+		serialized[i] = serializeDeliverySummary(row.deliverySummaryRow)
+	}
+
+	var nextCursor *string
+	if hasMore && len(page) > 0 {
+		last := page[len(page)-1]
+		c := pagination.EncodeSeqCursor(pagination.SeqCursor{Seq: last.Seq})
+		nextCursor = &c
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, struct {
+		Deliveries []deliverySummaryJSON `json:"deliveries"`
+		NextCursor *string               `json:"next_cursor"`
+	}{Deliveries: serialized, NextCursor: nextCursor})
+}

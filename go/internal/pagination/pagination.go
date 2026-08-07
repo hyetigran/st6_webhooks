@@ -54,3 +54,31 @@ func ParseLimit(raw string, fallback, max int) int {
 	}
 	return n
 }
+
+// SeqCursor paginates GET /endpoints/:id/deliveries — deliveries.seq
+// (docs/adr/0007) is already unique and monotonic, so a delivery-queue
+// cursor needs no id tiebreak the way Cursor's created_at+id does. This is
+// also why it's a distinct type from Cursor: reusing created_at here would
+// hit the exact tie risk ADR-0007 exists to avoid (Postgres's now() is
+// transaction-stable; a bulk same-endpoint insert can give several rows the
+// same created_at).
+type SeqCursor struct {
+	Seq int64 `json:"seq"`
+}
+
+func EncodeSeqCursor(c SeqCursor) string {
+	raw, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func DecodeSeqCursor(raw string) (SeqCursor, bool) {
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return SeqCursor{}, false
+	}
+	var c SeqCursor
+	if err := json.Unmarshal(decoded, &c); err != nil {
+		return SeqCursor{}, false
+	}
+	return c, true
+}
