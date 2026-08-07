@@ -66,17 +66,19 @@ const LATEST_RUN_COMMIT = "bdd4537";
 // same as the mockup's own disclaimer for this exact section.
 
 type Runtime = "Node" | "Go";
-type Band = "Quiet" | "Moderate" | "Flood";
+// Labels match the mockup's own traffic-band naming exactly ("1K"/"10K"/
+// "1M+"), not a paraphrase of it.
+type Band = "1K" | "10K" | "1M+";
 
 const RUNTIMES: Runtime[] = ["Node", "Go"];
-const BANDS: Band[] = ["Quiet", "Moderate", "Flood"];
+const BANDS: Band[] = ["1K", "10K", "1M+"];
 
 // evidence/load/publish-latency-flat.json + evidence/go/load/publish-latency-flat.json,
-// resultsByLevel[10|1000|10000].p99 — Quiet/Moderate/Flood map to the 10/1000/10000
+// resultsByLevel[10|1000|10000].p99 — 1K/10K/1M+ map to the 10/1000/10000
 // concurrent-publish levels those files measured at.
 const PUBLISH_P99_MS: Record<Runtime, Record<Band, number>> = {
-  Node: { Quiet: 37.3, Moderate: 7.7, Flood: 2.6 },
-  Go: { Quiet: 27.7, Moderate: 1.6, Flood: 3.2 },
+  Node: { "1K": 37.3, "10K": 7.7, "1M+": 2.6 },
+  Go: { "1K": 27.7, "10K": 1.6, "1M+": 3.2 },
 };
 
 const WORKER_COUNT = 3;
@@ -126,17 +128,6 @@ const RECEIVERS = [
   { name: "Analytics pipe", url: "https://analytics.example.com/hooks", top: 68.94 },
 ];
 
-// Sequential PIPELINE_NODES indices the dot walks through, in order. The
-// last leg (Delivery loop → a receiver) is drawn separately below, once per
-// receiver, since which receiver is "this leg's" target changes every lap.
-const PIPELINE_EDGES: [number, number][] = [
-  [0, 1],
-  [1, 2],
-  [2, 3],
-  [3, 4],
-  [4, 5],
-];
-
 const TICK_MS = 900;
 // How often the traveling dot's position is recomputed while it's in transit
 // between two boxes — smaller than TICK_MS so the motion reads as a
@@ -150,25 +141,134 @@ const TICK_MS = 900;
 // from it in the same render, every render, so nothing can drift apart.
 const FRAME_MS = 60;
 const TOTAL_STAGES = PIPELINE_NODES.length + 1; // +1 for "at a receiver"
-const BAND_MULTIPLIER: Record<Band, number> = { Quiet: 1, Moderate: 3, Flood: 9 };
+const BAND_MULTIPLIER: Record<Band, number> = { "1K": 1, "10K": 3, "1M+": 9 };
 
-function boxCenter(box: Box): { x: number; y: number } {
+type Point = { x: number; y: number };
+
+function boxCenter(box: Box): Point {
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }
+function rightEdge(box: Box): Point {
+  return { x: box.left + box.width, y: box.top + box.height / 2 };
+}
+function leftEdge(box: Box): Point {
+  return { x: box.left, y: box.top + box.height / 2 };
+}
+function bottomEdge(box: Box): Point {
+  return { x: box.left + box.width / 2, y: box.top + box.height };
+}
 
-function receiverCenter(receiverIndex: number): { x: number; y: number } {
+function receiverBox(receiverIndex: number): Box {
   const r = RECEIVERS[receiverIndex]!;
-  return boxCenter({ left: RECEIVER_LEFT, top: r.top, width: RECEIVER_WIDTH, height: RECEIVER_HEIGHT });
+  return { left: RECEIVER_LEFT, top: r.top, width: RECEIVER_WIDTH, height: RECEIVER_HEIGHT };
 }
 
-// index 0..5 = PIPELINE_NODES, index 6 = "at a receiver" (whichever one this
-// lap is headed to/dwelling at).
-function centerForIndex(index: number, receiverIndex: number): { x: number; y: number } {
-  return index < PIPELINE_NODES.length ? boxCenter(PIPELINE_NODES[index]!) : receiverCenter(receiverIndex);
+function receiverCenter(receiverIndex: number): Point {
+  return boxCenter(receiverBox(receiverIndex));
 }
 
-function lerp(a: { x: number; y: number }, b: { x: number; y: number }, t: number): { x: number; y: number } {
+function lerp(a: Point, b: Point, t: number): Point {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+// Right-angle "wire" between two edge points — mirrors the reference
+// mockup's circuit-board routing (orthogonal bends, not diagonal lines).
+// horizontal-first bends at the midpoint x (out → across → in); vertical-
+// first bends at the midpoint y. Which one to use is just "which axis
+// differs less" in practice — callers pick explicitly since that reads
+// clearer than inferring it.
+function elbowH(a: Point, b: Point): Point[] {
+  const midX = (a.x + b.x) / 2;
+  return [a, { x: midX, y: a.y }, { x: midX, y: b.y }, b];
+}
+function elbowV(a: Point, b: Point): Point[] {
+  const midY = (a.y + b.y) / 2;
+  return [a, { x: a.x, y: midY }, { x: b.x, y: midY }, b];
+}
+
+const [publisherBox, apiBox, eventsBox, expansionBox, deliveriesBox, deliveryLoopBox] = PIPELINE_NODES;
+
+interface Wire {
+  points: Point[];
+  dashed?: boolean;
+  arrow?: "end" | "both";
+}
+
+// The diagram's static backdrop — drawn once, independent of the animation.
+// Matches the mockup's edges one-for-one, plus one addition: a dashed
+// Expansion→deliveries wire the mockup leaves implicit (both boxes just sit
+// inside the same dashed "Postgres" boundary). Drawing it keeps the
+// traveling dot riding a visible wire for every hop of its route instead of
+// cutting across open space for the one leg the mockup doesn't wire up.
+const WIRES: Wire[] = [
+  { points: [rightEdge(publisherBox!), leftEdge(apiBox!)] },
+  { points: elbowH(rightEdge(apiBox!), leftEdge(eventsBox!)) },
+  { points: [rightEdge(eventsBox!), leftEdge(expansionBox!)], dashed: true, arrow: "end" },
+  { points: elbowV(bottomEdge(expansionBox!), rightEdge(deliveriesBox!)), dashed: true, arrow: "end" },
+  { points: [rightEdge(deliveriesBox!), leftEdge(deliveryLoopBox!)], dashed: true, arrow: "both" },
+  ...RECEIVERS.map((_, i) => ({ points: elbowH(rightEdge(deliveryLoopBox!), leftEdge(receiverBox(i))), arrow: "end" as const })),
+];
+
+// The dot's journey, one point-array per hop — always starting and ending
+// at a box CENTER (never an edge point) so consecutive hops share an exact
+// endpoint and the motion can't jump. Each hop otherwise rides the same
+// wire drawn above, so the dot visibly hugs the backdrop rather than
+// cutting a diagonal through it.
+const HOP_PATHS: Point[][] = [
+  [boxCenter(publisherBox!), ...WIRES[0]!.points, boxCenter(apiBox!)],
+  [boxCenter(apiBox!), ...WIRES[1]!.points, boxCenter(eventsBox!)],
+  [boxCenter(eventsBox!), ...WIRES[2]!.points, boxCenter(expansionBox!)],
+  [boxCenter(expansionBox!), ...WIRES[3]!.points, boxCenter(deliveriesBox!)],
+  [boxCenter(deliveriesBox!), ...WIRES[4]!.points, boxCenter(deliveryLoopBox!)],
+];
+
+function receiverHopPoints(receiverIndex: number): Point[] {
+  const wire = elbowH(rightEdge(deliveryLoopBox!), leftEdge(receiverBox(receiverIndex)));
+  return [boxCenter(deliveryLoopBox!), ...wire, receiverCenter(receiverIndex)];
+}
+
+// Arc-length parametrized so the dot moves at a constant visual speed even
+// though a hop's legs (short center→edge jogs, longer bends) have very
+// different lengths.
+function pointAlongPath(points: Point[], t: number): Point {
+  const segLengths = points.slice(1).map((p, i) => Math.hypot(p.x - points[i]!.x, p.y - points[i]!.y));
+  const total = segLengths.reduce((sum, l) => sum + l, 0);
+  if (total === 0) return points[0]!;
+  let remaining = Math.min(1, Math.max(0, t)) * total;
+  for (let i = 0; i < segLengths.length; i++) {
+    const len = segLengths[i]!;
+    if (remaining <= len || i === segLengths.length - 1) {
+      return lerp(points[i]!, points[i + 1]!, len === 0 ? 0 : remaining / len);
+    }
+    remaining -= len;
+  }
+  return points[points.length - 1]!;
+}
+
+interface PacketState {
+  stageIndex: number;
+  receiverIndex: number;
+  point: Point;
+}
+
+// The single-packet version of this (stageIndex/t/lap/receiverIndex/point,
+// all derived from one continuous `progress`) is the same math the
+// traveling dot always used — pulled out here so many packets, each just a
+// phase-shifted copy of the same `progress` clock, can share it. Every
+// packet still starts/ends each hop at a box center (via HOP_PATHS), so the
+// no-jump guarantee holds per-packet, independent of how many there are.
+function packetState(p: number): PacketState {
+  const stageIndex = Math.floor(p) % TOTAL_STAGES;
+  const lap = Math.floor(p / TOTAL_STAGES);
+  const receiverIndex = ((lap % RECEIVERS.length) + RECEIVERS.length) % RECEIVERS.length;
+  const t = stageIndex < PIPELINE_NODES.length ? p - Math.floor(p) : 0;
+  const point =
+    stageIndex < HOP_PATHS.length
+      ? pointAlongPath(HOP_PATHS[stageIndex]!, t)
+      : stageIndex === PIPELINE_NODES.length - 1
+        ? pointAlongPath(receiverHopPoints(receiverIndex), t)
+        : receiverCenter(receiverIndex);
+  return { stageIndex, receiverIndex, point };
 }
 
 function SegGroup<T extends string>({
@@ -189,18 +289,30 @@ function SegGroup<T extends string>({
       <div style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: 7 }}>
         {label}
       </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: wrap ? "wrap" : "nowrap" }}>
-        {options.map((opt) => (
+      {/* A single joined pill, not separate buttons — matches the mockup's
+         .seg/.seg-opt exactly (border-radius 4px is a deliberate, scoped
+         exception to the app's usual --radius:0; the mockup's segmented
+         control is the one rounded control in the whole design). */}
+      <div
+        style={{
+          display: "inline-flex",
+          flexWrap: wrap ? "wrap" : "nowrap",
+          overflow: "hidden",
+          border: "1px solid var(--color-divider)",
+          borderRadius: 4,
+        }}
+      >
+        {options.map((opt, i) => (
           <button
             key={opt}
             type="button"
             onClick={() => onChange(opt)}
             style={{
               fontFamily: "var(--font-body)",
-              fontSize: 12,
-              padding: "6px 10px",
-              borderRadius: "var(--radius)",
-              border: "1px solid var(--color-divider)",
+              fontSize: 13,
+              padding: "7px 12px",
+              border: "none",
+              borderLeft: i > 0 ? "1px solid var(--color-divider)" : "none",
               cursor: "pointer",
               background: opt === value ? "var(--color-accent)" : "transparent",
               color: opt === value ? "var(--color-bg)" : "var(--color-text)",
@@ -224,9 +336,36 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+// A local one-off, not the shared `Badge` — the mockup's receiver tag has
+// two distinct visual states (accent-tinted fill while delivering, outline
+// while idle) that `Badge` doesn't have and shouldn't gain just for this
+// diagram: `Badge` is used across every dashboard view with its own
+// deliberately flat, neutral-background styling (see its own comment), and
+// changing that shared default to match this one mockup detail would ripple
+// across already-shipped, reviewed screens well outside the pipeline
+// section this pass is scoped to.
+function PipelineTag({ active }: { active: boolean }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        fontSize: 11,
+        letterSpacing: 0.2,
+        padding: "3px 10px",
+        borderRadius: 3,
+        ...(active
+          ? { background: "var(--color-accent-100)", color: "var(--color-accent-800)" }
+          : { border: "1px solid var(--color-accent)", color: "var(--color-accent)" }),
+      }}
+    >
+      {active ? "delivering" : "idle"}
+    </span>
+  );
+}
+
 function PipelineDiagram() {
   const [runtime, setRuntime] = useState<Runtime>("Node");
-  const [band, setBand] = useState<Band>("Moderate");
+  const [band, setBand] = useState<Band>("10K");
   const [scenarioIndex, setScenarioIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
   // Continuous, in stage-units — grows without bound rather than wrapping, so
@@ -239,20 +378,26 @@ function PipelineDiagram() {
 
   const bandMultiplier = BAND_MULTIPLIER[band];
 
+  // Higher traffic bands don't just add more packets — each one also
+  // crosses the pipeline faster, same `bandMultiplier` as the packet count
+  // above (illustrative, like the rest of this clock, but not an arbitrary
+  // second number: 1M+ moving 9x faster than 1K is the same real ratio
+  // already driving 9x the packet count, and it happens to line up with the
+  // real evidence too — publish p99 actually drops at higher concurrency in
+  // this app's own load tests, see PUBLISH_P99_MS). Without this, 1M+ still
+  // only advances one stage every 900ms same as 1K, which reads as sluggish
+  // for what's supposed to be the extreme-throughput band.
   useEffect(() => {
     if (!playing) return;
-    const id = setInterval(() => setProgress((p) => p + FRAME_MS / TICK_MS), FRAME_MS);
+    const id = setInterval(() => setProgress((p) => p + (FRAME_MS / TICK_MS) * bandMultiplier), FRAME_MS);
     return () => clearInterval(id);
-  }, [playing]);
+  }, [playing, bandMultiplier]);
 
+  // Only `stageIndex` is needed here (the tick effect's dependency below) —
+  // the rest of what used to live in this one "current stage" computation
+  // (lap/receiverIndex/t/point) is now `packetState`, called once per packet
+  // further down, since there isn't a single canonical packet anymore.
   const stageIndex = Math.floor(progress) % TOTAL_STAGES;
-  const lap = Math.floor(progress / TOTAL_STAGES);
-  const receiverIndex = lap % RECEIVERS.length;
-  // Only the approach into a receiver (edge 5→6) is a real animated glide;
-  // once there, the dot holds still — advancing straight on to the next
-  // stage would mean flying back across the whole diagram to the Publisher,
-  // which isn't a real hand-off this system makes.
-  const t = stageIndex < PIPELINE_NODES.length ? progress - Math.floor(progress) : 0;
 
   // Fires once per stage crossing (stageIndex changes roughly once per
   // TICK_MS) — the discrete "tick" the stat counters and dot both used to
@@ -274,14 +419,47 @@ function PipelineDiagram() {
   const queueDepth = Math.max(0, Math.round(bandMultiplier * 3 + Math.sin(tickCount.current / 2) * bandMultiplier));
   const inFlight = 1 + (tickCount.current % WORKER_COUNT);
   const publishP99 = PUBLISH_P99_MS[runtime][band];
-  const dot =
-    stageIndex < PIPELINE_NODES.length
-      ? lerp(centerForIndex(stageIndex, receiverIndex), centerForIndex(stageIndex + 1, receiverIndex), t)
-      : receiverCenter(receiverIndex);
+
+  // Many packets, not one — the mockup's own diagram shows a dense stream
+  // (dozens to hundreds of dots at once, denser at higher traffic bands),
+  // not a single lonely one. Each packet is `packetState` at the same
+  // `progress` clock, just phase-shifted by its own index, spread evenly
+  // across the full cyclic path length (TOTAL_STAGES) — so at any instant
+  // they read as an evenly-spaced stream flowing through the pipeline
+  // rather than a single clump. Count scales with `bandMultiplier`, the
+  // same real multiplier the stat counters already use.
+  const packetCount = bandMultiplier * 12;
+  const phaseStep = TOTAL_STAGES / packetCount;
+  const packets = Array.from({ length: packetCount }, (_, i) => packetState(progress + i * phaseStep));
+
+  // A box/receiver is highlighted whenever ANY packet currently occupies
+  // it — with dozens of packets in flight, several boxes are legitimately
+  // "active" at once, which is a more honest picture than a single box
+  // lighting up at a time once there's more than one packet on the wire.
+  const activeNodeStages = new Set<number>();
+  const activeReceivers = new Set<number>();
+  for (const p of packets) {
+    if (p.stageIndex < PIPELINE_NODES.length) activeNodeStages.add(p.stageIndex);
+    else activeReceivers.add(p.receiverIndex);
+  }
 
   return (
     <div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "20px 32px", alignItems: "flex-end", marginBottom: 22 }}>
+      {/* alignItems is "flex-start", not the mockup's "flex-end": the
+         mockup's own 1440px-wide layout never wraps the scenario row, so
+         bottom-aligning every column (to flush the label-less Play button
+         against the others' button rows) is harmless there. This app's
+         narrower content column plus longer scenario labels do wrap that
+         row onto two lines, and "flex-end" applied to every item in the
+         line pulls the SHORT, single-row columns (Implementation, Traffic
+         band) down to match the wrapped column's full height — landing
+         their buttons even with the scenario row's *second* line instead of
+         its first, visually colliding with it. Anchoring every column to
+         the top instead and bottom-aligning only the Pause/Play button
+         (via its own alignSelf below) keeps that button flush against a
+         single-row neighbor without dragging the others down when one
+         column wraps. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "20px 32px", alignItems: "flex-start", marginBottom: 22 }}>
         <SegGroup label="Implementation" options={RUNTIMES} value={runtime} onChange={setRuntime} />
         <SegGroup label="Traffic band" options={BANDS} value={band} onChange={setBand} />
         <div style={{ flex: 1, minWidth: 320 }}>
@@ -293,7 +471,7 @@ function PipelineDiagram() {
             wrap
           />
         </div>
-        <Button variant="secondary" onClick={() => setPlaying((p) => !p)} style={{ minWidth: 92 }}>
+        <Button variant="secondary" onClick={() => setPlaying((p) => !p)} style={{ minWidth: 92, alignSelf: "flex-end" }}>
           {playing ? "Pause" : "Play"}
         </Button>
       </div>
@@ -327,36 +505,54 @@ function PipelineDiagram() {
             Postgres — the queue
           </div>
 
-          {/* The wire the dot flows along — same percentage coordinate space
-             as the boxes below (viewBox 0 0 100 100 + preserveAspectRatio
-             "none" maps 1:1 onto left/top percentages), so a line's
-             endpoints always meet a box's center exactly. */}
+          {/* The static wire backdrop — same percentage coordinate space as
+             the boxes below (viewBox 0 0 100 100 + preserveAspectRatio
+             "none" maps 1:1 onto left/top percentages), right-angle routing
+             per WIRES so it reads as circuit-board traces rather than
+             diagonal lines, matching the reference mockup. Arrowhead size is
+             axis-compensated for the box's fixed 1240:470 aspect ratio so a
+             "right" arrow and a "down" arrow look the same physical size
+             despite the viewBox's x/y units mapping to different pixel
+             scales. */}
           <svg
             aria-hidden
             viewBox="0 0 100 100"
             preserveAspectRatio="none"
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
           >
-            {PIPELINE_EDGES.map(([a, b]) => {
-              const pa = boxCenter(PIPELINE_NODES[a]!);
-              const pb = boxCenter(PIPELINE_NODES[b]!);
+            {WIRES.map((wire, i) => {
+              const pts = wire.points.map((p) => `${p.x},${p.y}`).join(" ");
+              const arrows: Point[] = [];
+              if (wire.arrow === "end" || wire.arrow === "both") arrows.push(wire.points[wire.points.length - 1]!);
+              if (wire.arrow === "both") arrows.unshift(wire.points[0]!);
               return (
-                <line key={`${a}-${b}`} x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} style={{ stroke: "var(--color-divider)" }} strokeWidth={0.3} />
-              );
-            })}
-            {RECEIVERS.map((_, i) => {
-              const pa = boxCenter(PIPELINE_NODES[PIPELINE_NODES.length - 1]!);
-              const pb = receiverCenter(i);
-              return (
-                <line
-                  key={`delivery-loop-${i}`}
-                  x1={pa.x}
-                  y1={pa.y}
-                  x2={pb.x}
-                  y2={pb.y}
-                  style={{ stroke: "var(--color-divider)" }}
-                  strokeWidth={0.3}
-                />
+                <g key={i}>
+                  <polyline
+                    points={pts}
+                    style={{ stroke: "var(--color-divider)", fill: "none" }}
+                    strokeWidth={0.3}
+                    strokeDasharray={wire.dashed ? "1.4 1" : undefined}
+                  />
+                  {arrows.map((tip, ai) => {
+                    const isStart = wire.arrow === "both" && ai === 0;
+                    const from = isStart ? wire.points[1]! : wire.points[wire.points.length - 2]!;
+                    const dx = tip.x - from.x;
+                    const dy = tip.y - from.y;
+                    const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up";
+                    // Depth/half-width in viewBox units, pre-compensated so
+                    // every arrow is ~7px deep / ~4.5px wide once the
+                    // 1240:470 aspect ratio stretches the viewBox onto the
+                    // actual box.
+                    const horiz = dir === "left" || dir === "right";
+                    const depth = horiz ? 0.56 : 1.49;
+                    const half = horiz ? 0.96 : 0.36;
+                    const sign = dir === "right" || dir === "down" ? -1 : 1;
+                    const points = horiz
+                      ? `${tip.x + sign * depth},${tip.y - half} ${tip.x},${tip.y} ${tip.x + sign * depth},${tip.y + half}`
+                      : `${tip.x - half},${tip.y + sign * depth} ${tip.x},${tip.y} ${tip.x + half},${tip.y + sign * depth}`;
+                    return <polygon key={ai} points={points} style={{ fill: "var(--color-text-muted)" }} />;
+                  })}
+                </g>
               );
             })}
           </svg>
@@ -375,7 +571,7 @@ function PipelineDiagram() {
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "center",
-                borderColor: stageIndex === i ? "var(--color-accent)" : "var(--color-divider)",
+                borderColor: activeNodeStages.has(i) ? "var(--color-accent)" : "var(--color-divider)",
               }}
             >
               <div style={{ fontFamily: "var(--font-heading)", fontSize: 14, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.1 }}>
@@ -399,7 +595,7 @@ function PipelineDiagram() {
                 display: "flex",
                 flexDirection: "column",
                 gap: 3,
-                borderColor: stageIndex === PIPELINE_NODES.length && receiverIndex === i ? "var(--color-accent)" : "var(--color-divider)",
+                borderColor: activeReceivers.has(i) ? "var(--color-accent)" : "var(--color-divider)",
               }}
             >
               <div style={{ fontFamily: "var(--font-heading)", fontSize: 14, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.1 }}>
@@ -407,33 +603,35 @@ function PipelineDiagram() {
               </div>
               <div style={{ fontSize: 11, lineHeight: "15px", color: "var(--color-text-muted)" }}>{r.url}</div>
               <div style={{ marginTop: "auto" }}>
-                <Badge tone={stageIndex === PIPELINE_NODES.length && receiverIndex === i ? "accent" : "neutral"}>
-                  {stageIndex === PIPELINE_NODES.length && receiverIndex === i ? "delivering" : "idle"}
-                </Badge>
+                <PipelineTag active={activeReceivers.has(i)} />
               </div>
             </Card>
           ))}
 
-          {/* The traveling dot — its position is the ONE lerp between
-             `centerForIndex(stageIndex, ...)` and `centerForIndex(stageIndex
-             + 1, ...)`, the same stageIndex that colors the boxes' borders
-             above. There's no independent animation timeline here (no CSS
-             transition) — position and border both fall out of the same
-             `progress` value on every render, so they can't disagree. */}
-          <div
-            aria-hidden
-            style={{
-              position: "absolute",
-              left: `${dot.x}%`,
-              top: `${dot.y}%`,
-              width: 10,
-              height: 10,
-              marginLeft: -5,
-              marginTop: -5,
-              borderRadius: "50%",
-              background: "var(--color-accent)",
-            }}
-          />
+          {/* The traveling packets — each one is the same `pointAlongPath`
+             call the single dot always used, just run once per entry in
+             `packets` (themselves phase-shifted copies of one `progress`
+             clock, see `packetState`). Position and border color both still
+             fall out of that one `progress` value on every render — there's
+             still no independent animation timeline, just more points
+             sampled from it. */}
+          {packets.map((p, i) => (
+            <div
+              key={i}
+              aria-hidden
+              style={{
+                position: "absolute",
+                left: `${p.point.x}%`,
+                top: `${p.point.y}%`,
+                width: 6,
+                height: 6,
+                marginLeft: -3,
+                marginTop: -3,
+                borderRadius: "50%",
+                background: "var(--color-accent)",
+              }}
+            />
+          ))}
         </div>
       </div>
 
