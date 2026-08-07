@@ -69,7 +69,7 @@ func run() (map[string]any, error) {
 	// Sequential, not concurrent, spawning — deterministically makes A the
 	// claimer, rather than racing two fresh workers for who gets there
 	// first.
-	workerA, err := scenariosupport.SpawnChaosWorker("./bin/chaosworker", nil)
+	workerA, err := scenariosupport.SpawnWorker("./bin/chaosworker", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func run() (map[string]any, error) {
 		return nil, err
 	}
 
-	workerB, err := scenariosupport.SpawnChaosWorker("./bin/chaosworker", nil)
+	workerB, err := scenariosupport.SpawnWorker("./bin/chaosworker", nil)
 	if err != nil {
 		return nil, err
 	}

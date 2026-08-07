@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"os"
+	"syscall"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,12 +16,16 @@ const ChaosDatabaseName = "webhooks_go_chaos"
 
 var ChaosDatabaseURL = "postgres://webhooks:webhooks@localhost:5533/" + ChaosDatabaseName
 
-// SpawnChaosWorker starts the pre-built chaosworker binary with small
+// SpawnWorker starts the pre-built chaosworker binary with small
 // timeouts/poll-interval by default — PRD §8's "time is injected": chaos
 // scenarios need lease expiry and backoff to happen in seconds, not the
 // production defaults' tens of seconds. envOverrides are applied on top of
-// (and can override) these defaults.
-func SpawnChaosWorker(binPath string, envOverrides map[string]string) (*ManagedProcess, error) {
+// (and can override) these defaults. Also used by load scenarios that need
+// a real worker pool (e.g. noisy-neighbor, tarpit-fairness) — the
+// permissive `trustAnyAddress` resolver chaosworker builds with is exactly
+// as necessary there as it is for chaos scenarios, since both point
+// endpoints at local receivers.
+func SpawnWorker(binPath string, envOverrides map[string]string) (*ManagedProcess, error) {
 	defaults := map[string]string{
 		"DATABASE_URL":                 ChaosDatabaseURL,
 		"SECRET_ENCRYPTION_KEY":        base64.StdEncoding.EncodeToString(ScenarioSecretEncryptionKey),
@@ -39,6 +44,30 @@ func SpawnChaosWorker(binPath string, envOverrides map[string]string) (*ManagedP
 		env = append(env, k+"="+v)
 	}
 	return StartProcess(binPath, nil, env)
+}
+
+// SpawnWorkerPool starts count workers with identical envOverrides,
+// returning them alongside a cleanup func that SIGKILLs every one — the
+// spawn-pool-then-defer-cleanup shape every noisy-neighbor/tarpit-style
+// load scenario needs.
+func SpawnWorkerPool(binPath string, count int, envOverrides map[string]string) ([]*ManagedProcess, func(), error) {
+	workers := make([]*ManagedProcess, count)
+	for i := 0; i < count; i++ {
+		w, err := SpawnWorker(binPath, envOverrides)
+		if err != nil {
+			for _, started := range workers[:i] {
+				_ = started.Kill(syscall.SIGKILL)
+			}
+			return nil, nil, err
+		}
+		workers[i] = w
+	}
+	cleanup := func() {
+		for _, w := range workers {
+			_ = w.Kill(syscall.SIGKILL)
+		}
+	}
+	return workers, cleanup, nil
 }
 
 func CreateEndpoint(ctx context.Context, pool *pgxpool.Pool, tenantID string, eventTypes []string, url, signingSecret string) (string, error) {

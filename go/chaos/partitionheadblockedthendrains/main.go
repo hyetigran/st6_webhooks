@@ -92,7 +92,7 @@ func run() (map[string]any, error) {
 	// reliably observe the "E1 failed, awaiting retry" window and check
 	// blocked_on_delivery_id live, instead of racing a retry that could
 	// otherwise fire within a single poll interval.
-	worker, err := scenariosupport.SpawnChaosWorker("./bin/chaosworker", map[string]string{
+	worker, err := scenariosupport.SpawnWorker("./bin/chaosworker", map[string]string{
 		"BACKOFF_BASE_DELAY_MS": "2000",
 		"BACKOFF_MAX_DELAY_MS":  "3000",
 	})

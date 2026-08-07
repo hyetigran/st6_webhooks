@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"sort"
 	"sync"
-	"syscall"
 	"time"
 
 	"webhooks-go/internal/scenariosupport"
@@ -66,22 +65,14 @@ func run() (map[string]any, error) {
 		return nil, err
 	}
 
-	workers := make([]*scenariosupport.ManagedProcess, workerCount)
-	for i := 0; i < workerCount; i++ {
-		w, err := scenariosupport.SpawnChaosWorker("./bin/chaosworker", map[string]string{
-			"DATABASE_URL":                 scenariosupport.LoadDatabaseURL,
-			"WORKER_IDLE_POLL_INTERVAL_MS": "20",
-		})
-		if err != nil {
-			return nil, err
-		}
-		workers[i] = w
+	_, cleanupWorkers, err := scenariosupport.SpawnWorkerPool("./bin/chaosworker", workerCount, map[string]string{
+		"DATABASE_URL":                 scenariosupport.LoadDatabaseURL,
+		"WORKER_IDLE_POLL_INTERVAL_MS": "20",
+	})
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		for _, w := range workers {
-			_ = w.Kill(syscall.SIGKILL)
-		}
-	}()
+	defer cleanupWorkers()
 
 	// Flood: publish a large backlog across many endpoints, all at once,
 	// concurrently (this is the noise — we don't wait on it).

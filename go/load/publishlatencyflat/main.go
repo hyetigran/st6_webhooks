@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"syscall"
 	"time"
 
@@ -24,11 +23,6 @@ const port = 4100
 
 func main() {
 	scenariosupport.RunScenario("load", "publish-latency-flat", run)
-}
-
-type levelResult struct {
-	P50 float64 `json:"p50"`
-	P99 float64 `json:"p99"`
 }
 
 func run() (map[string]any, error) {
@@ -55,7 +49,7 @@ func run() (map[string]any, error) {
 		return nil, err
 	}
 
-	resultsByLevel := map[int]levelResult{}
+	resultsByLevel := map[int]scenariosupport.LatencyResult{}
 	cumulativeEndpoints := 0
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -68,15 +62,14 @@ func run() (map[string]any, error) {
 			cumulativeEndpoints = level
 		}
 
-		latenciesMs := make([]float64, 0, requestsPerLevel)
-		for i := 0; i < requestsPerLevel; i++ {
+		result, err := scenariosupport.MeasureLatencies(requestsPerLevel, func(i int) (float64, error) {
 			body, err := json.Marshal(map[string]any{"type": "order.created", "payload": map[string]any{"i": i}})
 			if err != nil {
-				return nil, err
+				return 0, err
 			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/events", bytes.NewReader(body))
 			if err != nil {
-				return nil, err
+				return 0, err
 			}
 			req.Header.Set("content-type", "application/json")
 			req.Header.Set("authorization", "Bearer "+apiKey)
@@ -85,31 +78,25 @@ func run() (map[string]any, error) {
 			startedAt := time.Now()
 			resp, err := client.Do(req)
 			if err != nil {
-				return nil, err
+				return 0, err
 			}
 			elapsedMs := float64(time.Since(startedAt).Microseconds()) / 1000.0
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusAccepted {
-				return nil, fmt.Errorf("expected 202 from POST /events at subscriber level %d, got %d", level, resp.StatusCode)
+				return 0, fmt.Errorf("expected 202 from POST /events at subscriber level %d, got %d", level, resp.StatusCode)
 			}
-			latenciesMs = append(latenciesMs, elapsedMs)
+			return elapsedMs, nil
+		})
+		if err != nil {
+			return nil, err
 		}
-
-		sort.Float64s(latenciesMs)
-		resultsByLevel[level] = levelResult{
-			P50: scenariosupport.Percentile(latenciesMs, 50),
-			P99: scenariosupport.Percentile(latenciesMs, 99),
-		}
+		resultsByLevel[level] = result
 	}
 
 	baseline := resultsByLevel[subscriberLevels[0]]
 	largest := resultsByLevel[subscriberLevels[len(subscriberLevels)-1]]
-	// Generous multiple, not an exact match — this is asserting "doesn't
-	// scale with subscriber count," not "is bit-for-bit identical," since
-	// real scheduling/GC jitter means run-to-run noise exists regardless.
-	if largest.P99 > baseline.P99*5+50 {
-		return nil, fmt.Errorf("expected p99 publish latency at %d subscribers (%.1fms) to stay roughly flat versus %d subscribers (%.1fms)",
-			subscriberLevels[len(subscriberLevels)-1], largest.P99, subscriberLevels[0], baseline.P99)
+	if err := scenariosupport.AssertLatencyFlat(baseline, largest, fmt.Sprintf("publish latency at %d subscribers", subscriberLevels[len(subscriberLevels)-1])); err != nil {
+		return nil, err
 	}
 
 	return map[string]any{"resultsByLevel": resultsByLevel}, nil

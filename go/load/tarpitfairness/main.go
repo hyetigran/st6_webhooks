@@ -12,7 +12,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"syscall"
 	"time"
 
 	"webhooks-go/internal/scenariosupport"
@@ -89,24 +88,16 @@ func run() (map[string]any, error) {
 		return nil, err
 	}
 
-	workers := make([]*scenariosupport.ManagedProcess, workerCount)
-	for i := 0; i < workerCount; i++ {
-		w, err := scenariosupport.SpawnChaosWorker("./bin/chaosworker", map[string]string{
-			"DATABASE_URL":                 scenariosupport.LoadDatabaseURL,
-			"WORKER_IDLE_POLL_INTERVAL_MS": "20",
-			"OUTBOUND_TOTAL_TIMEOUT_MS":    fmt.Sprintf("%d", outboundTotalTimeoutMs),
-			"OUTBOUND_CONNECT_TIMEOUT_MS":  "1000",
-		})
-		if err != nil {
-			return nil, err
-		}
-		workers[i] = w
+	_, cleanupWorkers, err := scenariosupport.SpawnWorkerPool("./bin/chaosworker", workerCount, map[string]string{
+		"DATABASE_URL":                 scenariosupport.LoadDatabaseURL,
+		"WORKER_IDLE_POLL_INTERVAL_MS": "20",
+		"OUTBOUND_TOTAL_TIMEOUT_MS":    fmt.Sprintf("%d", outboundTotalTimeoutMs),
+		"OUTBOUND_CONNECT_TIMEOUT_MS":  "1000",
+	})
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		for _, w := range workers {
-			_ = w.Kill(syscall.SIGKILL)
-		}
-	}()
+	defer cleanupWorkers()
 
 	// Let the pool saturate: all workerCount tarpit endpoints busy.
 	if err := scenariosupport.WaitUntil(ctx, func(ctx context.Context) (bool, error) {

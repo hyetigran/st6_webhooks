@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -119,7 +120,7 @@ func CreateTerminalDeliveriesBulk(ctx context.Context, pool *pgxpool.Pool, tenan
 
 // SpawnAPIServer starts the pre-built api binary against the load database
 // on the given port. Always exec's bin/api directly, never `go run` — same
-// signal-delivery reasoning as SpawnChaosWorker/ManagedProcess.
+// signal-delivery reasoning as SpawnWorker/ManagedProcess.
 func SpawnAPIServer(binPath string, port int, envOverrides map[string]string) (*ManagedProcess, error) {
 	defaults := map[string]string{
 		"DATABASE_URL":          LoadDatabaseURL,
@@ -166,4 +167,39 @@ func Percentile(sortedMs []float64, p float64) float64 {
 		index = len(sortedMs) - 1
 	}
 	return sortedMs[index]
+}
+
+// LatencyResult is p50/p99 over one batch of measured requests — the shape
+// both publish-latency-flat and replay-latency-flat report per level.
+type LatencyResult struct {
+	P50 float64 `json:"p50"`
+	P99 float64 `json:"p99"`
+}
+
+// MeasureLatencies calls request count times, once per i in [0, count),
+// timing each call and collecting the elapsed milliseconds request itself
+// returns (so the caller controls exactly what's measured and what counts
+// as a failure — e.g. asserting a 202 status before returning the elapsed
+// time). Returns the resulting p50/p99.
+func MeasureLatencies(count int, request func(i int) (elapsedMs float64, err error)) (LatencyResult, error) {
+	latenciesMs := make([]float64, 0, count)
+	for i := 0; i < count; i++ {
+		elapsedMs, err := request(i)
+		if err != nil {
+			return LatencyResult{}, err
+		}
+		latenciesMs = append(latenciesMs, elapsedMs)
+	}
+	sort.Float64s(latenciesMs)
+	return LatencyResult{P50: Percentile(latenciesMs, 50), P99: Percentile(latenciesMs, 99)}, nil
+}
+
+// AssertLatencyFlat checks the R-8 "latency doesn't scale with X" claim: a
+// generous multiple, not an exact match, since real scheduling/GC jitter
+// means run-to-run noise exists regardless.
+func AssertLatencyFlat(baseline, largest LatencyResult, label string) error {
+	if largest.P99 > baseline.P99*5+50 {
+		return fmt.Errorf("expected p99 %s (%.1fms) to stay roughly flat versus the baseline (%.1fms)", label, largest.P99, baseline.P99)
+	}
+	return nil
 }

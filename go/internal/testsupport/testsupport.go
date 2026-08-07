@@ -57,7 +57,10 @@ func ensureTestDatabase(ctx context.Context) error {
 // whatever server or worker code the test exercises.
 var SecretEncryptionKey = []byte("abcdefghijklmnopqrstuvwxyz012345")
 
-var migrateOnce sync.Once
+var (
+	migrateOnce sync.Once
+	migrateErr  error
+)
 
 // SetupPool connects to the test database, migrates it (once per test
 // binary), and truncates every table so each test starts from a clean
@@ -68,19 +71,23 @@ func SetupPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
 
-	var setupErr error
+	// migrateErr is package-level, not local — sync.Once.Do only ever runs
+	// its closure on the very first call; every later call in this test
+	// binary must still see whatever that first call's outcome was, not a
+	// fresh (nil) local variable that would silently report success.
 	migrateOnce.Do(func() {
-		if setupErr = ensureTestDatabase(ctx); setupErr != nil {
+		if migrateErr = ensureTestDatabase(ctx); migrateErr != nil {
 			return
 		}
 		pool, err := db.NewPool(ctx, TestDatabaseURL)
 		if err != nil {
-			setupErr = err
+			migrateErr = err
 			return
 		}
 		defer pool.Close()
-		setupErr = db.Migrate(ctx, pool)
+		migrateErr = db.Migrate(ctx, pool)
 	})
+	setupErr := migrateErr
 	require.NoError(t, setupErr)
 
 	pool, err := db.NewPool(ctx, TestDatabaseURL)

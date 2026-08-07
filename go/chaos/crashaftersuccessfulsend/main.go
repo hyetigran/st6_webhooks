@@ -75,7 +75,7 @@ func run() (map[string]any, error) {
 		return nil, err
 	}
 
-	workerA, err := scenariosupport.SpawnChaosWorker("./bin/chaosworker", nil)
+	workerA, err := scenariosupport.SpawnWorker("./bin/chaosworker", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func run() (map[string]any, error) {
 		return nil, err
 	}
 
-	workerB, err := scenariosupport.SpawnChaosWorker("./bin/chaosworker", nil)
+	workerB, err := scenariosupport.SpawnWorker("./bin/chaosworker", nil)
 	if err != nil {
 		return nil, err
 	}

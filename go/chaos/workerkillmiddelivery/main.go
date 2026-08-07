@@ -62,7 +62,7 @@ func run() (map[string]any, error) {
 	// mid-request (not self-timed-out) at the moment it's killed. Worker B
 	// uses the harness's small defaults, so its own lease-staleness check
 	// only needs to wait out a couple of seconds, not A's 4s+ window.
-	workerA, err := scenariosupport.SpawnChaosWorker("./bin/chaosworker", map[string]string{
+	workerA, err := scenariosupport.SpawnWorker("./bin/chaosworker", map[string]string{
 		"OUTBOUND_TOTAL_TIMEOUT_MS":   "8000",
 		"OUTBOUND_CONNECT_TIMEOUT_MS": "8000",
 	})
@@ -79,7 +79,7 @@ func run() (map[string]any, error) {
 		return nil, err
 	}
 
-	workerB, err := scenariosupport.SpawnChaosWorker("./bin/chaosworker", nil)
+	workerB, err := scenariosupport.SpawnWorker("./bin/chaosworker", nil)
 	if err != nil {
 		return nil, err
 	}

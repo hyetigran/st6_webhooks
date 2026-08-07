@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"syscall"
 	"time"
 
@@ -25,11 +24,6 @@ const port = 4101
 
 func main() {
 	scenariosupport.RunScenario("load", "replay-latency-flat", run)
-}
-
-type levelResult struct {
-	P50 float64 `json:"p50"`
-	P99 float64 `json:"p99"`
 }
 
 func run() (map[string]any, error) {
@@ -63,7 +57,7 @@ func run() (map[string]any, error) {
 		return nil, err
 	}
 
-	resultsByWindow := map[int]levelResult{}
+	resultsByWindow := map[int]scenariosupport.LatencyResult{}
 	cumulativeHistory := 0
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -76,18 +70,17 @@ func run() (map[string]any, error) {
 			cumulativeHistory = windowSize
 		}
 
-		latenciesMs := make([]float64, 0, requestsPerLevel)
-		for i := 0; i < requestsPerLevel; i++ {
+		result, err := scenariosupport.MeasureLatencies(requestsPerLevel, func(i int) (float64, error) {
 			body, err := json.Marshal(map[string]any{
 				"range_start": "2020-01-01T00:00:00.000Z",
 				"range_end":   "2030-01-01T00:00:00.000Z",
 			})
 			if err != nil {
-				return nil, err
+				return 0, err
 			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/endpoints/"+endpointID+"/replays", bytes.NewReader(body))
 			if err != nil {
-				return nil, err
+				return 0, err
 			}
 			req.Header.Set("content-type", "application/json")
 			req.Header.Set("authorization", "Bearer "+apiKey)
@@ -96,28 +89,25 @@ func run() (map[string]any, error) {
 			startedAt := time.Now()
 			resp, err := client.Do(req)
 			if err != nil {
-				return nil, err
+				return 0, err
 			}
 			elapsedMs := float64(time.Since(startedAt).Microseconds()) / 1000.0
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusAccepted {
-				return nil, fmt.Errorf("expected 202 from POST /endpoints/:id/replays at window size %d, got %d", windowSize, resp.StatusCode)
+				return 0, fmt.Errorf("expected 202 from POST /endpoints/:id/replays at window size %d, got %d", windowSize, resp.StatusCode)
 			}
-			latenciesMs = append(latenciesMs, elapsedMs)
+			return elapsedMs, nil
+		})
+		if err != nil {
+			return nil, err
 		}
-
-		sort.Float64s(latenciesMs)
-		resultsByWindow[windowSize] = levelResult{
-			P50: scenariosupport.Percentile(latenciesMs, 50),
-			P99: scenariosupport.Percentile(latenciesMs, 99),
-		}
+		resultsByWindow[windowSize] = result
 	}
 
 	baseline := resultsByWindow[windowSizes[0]]
 	largest := resultsByWindow[windowSizes[len(windowSizes)-1]]
-	if largest.P99 > baseline.P99*5+50 {
-		return nil, fmt.Errorf("expected p99 replay latency at window size %d (%.1fms) to stay roughly flat versus window size %d (%.1fms)",
-			windowSizes[len(windowSizes)-1], largest.P99, windowSizes[0], baseline.P99)
+	if err := scenariosupport.AssertLatencyFlat(baseline, largest, fmt.Sprintf("replay latency at window size %d", windowSizes[len(windowSizes)-1])); err != nil {
+		return nil, err
 	}
 
 	return map[string]any{"resultsByWindow": resultsByWindow}, nil
