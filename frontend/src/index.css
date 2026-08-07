@@ -45,19 +45,3 @@ textarea {
   font-size: inherit;
   color: inherit;
 }
-
-/* Used by Landing.tsx's pipeline diagram to mark the currently-active stage
-   in place, inside its own box — deliberately not a dot that travels across
-   the diagram, which read as a rendering glitch when caught mid-flight
-   (it could land visually inside a different box than the one whose border
-   was highlighted, since a CSS position transition and a stage-driven border
-   color are two different things animating independently). */
-@keyframes gr-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}

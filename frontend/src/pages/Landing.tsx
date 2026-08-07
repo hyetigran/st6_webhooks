@@ -126,8 +126,50 @@ const RECEIVERS = [
   { name: "Analytics pipe", url: "https://analytics.example.com/hooks", top: 68.94 },
 ];
 
+// Sequential PIPELINE_NODES indices the dot walks through, in order. The
+// last leg (Delivery loop → a receiver) is drawn separately below, once per
+// receiver, since which receiver is "this leg's" target changes every lap.
+const PIPELINE_EDGES: [number, number][] = [
+  [0, 1],
+  [1, 2],
+  [2, 3],
+  [3, 4],
+  [4, 5],
+];
+
 const TICK_MS = 900;
+// How often the traveling dot's position is recomputed while it's in transit
+// between two boxes — smaller than TICK_MS so the motion reads as a
+// continuous glide rather than a jump, without needing a CSS transition
+// (which was the previous approach's problem: a position transition and the
+// box border's color change are two independently-timed animations driven by
+// the same state change, so they could visibly disagree mid-flight — see the
+// prior fix's commit message). Here there's a single continuous `progress`
+// value and everything else — the dot's position, which box is "active" and
+// therefore highlighted, which receiver a lap is headed toward — is derived
+// from it in the same render, every render, so nothing can drift apart.
+const FRAME_MS = 60;
+const TOTAL_STAGES = PIPELINE_NODES.length + 1; // +1 for "at a receiver"
 const BAND_MULTIPLIER: Record<Band, number> = { Quiet: 1, Moderate: 3, Flood: 9 };
+
+function boxCenter(box: Box): { x: number; y: number } {
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+}
+
+function receiverCenter(receiverIndex: number): { x: number; y: number } {
+  const r = RECEIVERS[receiverIndex]!;
+  return boxCenter({ left: RECEIVER_LEFT, top: r.top, width: RECEIVER_WIDTH, height: RECEIVER_HEIGHT });
+}
+
+// index 0..5 = PIPELINE_NODES, index 6 = "at a receiver" (whichever one this
+// lap is headed to/dwelling at).
+function centerForIndex(index: number, receiverIndex: number): { x: number; y: number } {
+  return index < PIPELINE_NODES.length ? boxCenter(PIPELINE_NODES[index]!) : receiverCenter(receiverIndex);
+}
+
+function lerp(a: { x: number; y: number }, b: { x: number; y: number }, t: number): { x: number; y: number } {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
 
 function SegGroup<T extends string>({
   label,
@@ -173,29 +215,6 @@ function SegGroup<T extends string>({
   );
 }
 
-/** Marks a box as the pipeline's currently-active stage. Rendered as a child
- * of that exact box (not a separately-positioned element animating its way
- * across the diagram), so it can never visually land somewhere other than
- * the box whose border is also highlighted — both come from the same
- * `stage === i` check in the same render. */
-function PulseDot() {
-  return (
-    <span
-      aria-hidden
-      style={{
-        position: "absolute",
-        top: 8,
-        right: 8,
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: "var(--color-accent)",
-        animation: "gr-pulse 1.4s ease-in-out infinite",
-      }}
-    />
-  );
-}
-
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div style={{ background: "var(--color-bg)", padding: "11px 12px" }}>
@@ -210,8 +229,10 @@ function PipelineDiagram() {
   const [band, setBand] = useState<Band>("Moderate");
   const [scenarioIndex, setScenarioIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
-  const [stage, setStage] = useState(0); // 0..5 = PIPELINE_NODES, 6 = a receiver
-  const [receiverIndex, setReceiverIndex] = useState(0);
+  // Continuous, in stage-units — grows without bound rather than wrapping, so
+  // "which lap" (and therefore which receiver this lap targets) is a plain
+  // derived value instead of its own piece of state to keep in sync.
+  const [progress, setProgress] = useState(0);
   const [published, setPublished] = useState(0);
   const [delivered, setDelivered] = useState(0);
   const tickCount = useRef(0);
@@ -220,29 +241,43 @@ function PipelineDiagram() {
 
   useEffect(() => {
     if (!playing) return;
-    const id = setInterval(() => {
-      tickCount.current += 1;
-      setStage((s) => (s + 1) % (PIPELINE_NODES.length + 1));
-      setPublished((p) => p + bandMultiplier);
-      setDelivered((d) => d + Math.max(0, bandMultiplier - 1));
-    }, TICK_MS);
+    const id = setInterval(() => setProgress((p) => p + FRAME_MS / TICK_MS), FRAME_MS);
     return () => clearInterval(id);
-  }, [playing, bandMultiplier]);
+  }, [playing]);
 
+  const stageIndex = Math.floor(progress) % TOTAL_STAGES;
+  const lap = Math.floor(progress / TOTAL_STAGES);
+  const receiverIndex = lap % RECEIVERS.length;
+  // Only the approach into a receiver (edge 5→6) is a real animated glide;
+  // once there, the dot holds still — advancing straight on to the next
+  // stage would mean flying back across the whole diagram to the Publisher,
+  // which isn't a real hand-off this system makes.
+  const t = stageIndex < PIPELINE_NODES.length ? progress - Math.floor(progress) : 0;
+
+  // Fires once per stage crossing (stageIndex changes roughly once per
+  // TICK_MS) — the discrete "tick" the stat counters and dot both used to
+  // share before the dot's motion became continuous.
   useEffect(() => {
-    if (stage === PIPELINE_NODES.length) setReceiverIndex((r) => (r + 1) % RECEIVERS.length);
-  }, [stage]);
+    tickCount.current += 1;
+    setPublished((p) => p + bandMultiplier);
+    setDelivered((d) => d + Math.max(0, bandMultiplier - 1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageIndex]);
 
   useEffect(() => {
     setPublished(0);
     setDelivered(0);
-    setStage(0);
+    setProgress(0);
   }, [runtime, band, scenarioIndex]);
 
   const scenario = SCENARIOS[scenarioIndex]!;
   const queueDepth = Math.max(0, Math.round(bandMultiplier * 3 + Math.sin(tickCount.current / 2) * bandMultiplier));
   const inFlight = 1 + (tickCount.current % WORKER_COUNT);
   const publishP99 = PUBLISH_P99_MS[runtime][band];
+  const dot =
+    stageIndex < PIPELINE_NODES.length
+      ? lerp(centerForIndex(stageIndex, receiverIndex), centerForIndex(stageIndex + 1, receiverIndex), t)
+      : receiverCenter(receiverIndex);
 
   return (
     <div>
@@ -292,6 +327,40 @@ function PipelineDiagram() {
             Postgres — the queue
           </div>
 
+          {/* The wire the dot flows along — same percentage coordinate space
+             as the boxes below (viewBox 0 0 100 100 + preserveAspectRatio
+             "none" maps 1:1 onto left/top percentages), so a line's
+             endpoints always meet a box's center exactly. */}
+          <svg
+            aria-hidden
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+          >
+            {PIPELINE_EDGES.map(([a, b]) => {
+              const pa = boxCenter(PIPELINE_NODES[a]!);
+              const pb = boxCenter(PIPELINE_NODES[b]!);
+              return (
+                <line key={`${a}-${b}`} x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} style={{ stroke: "var(--color-divider)" }} strokeWidth={0.3} />
+              );
+            })}
+            {RECEIVERS.map((_, i) => {
+              const pa = boxCenter(PIPELINE_NODES[PIPELINE_NODES.length - 1]!);
+              const pb = receiverCenter(i);
+              return (
+                <line
+                  key={`delivery-loop-${i}`}
+                  x1={pa.x}
+                  y1={pa.y}
+                  x2={pb.x}
+                  y2={pb.y}
+                  style={{ stroke: "var(--color-divider)" }}
+                  strokeWidth={0.3}
+                />
+              );
+            })}
+          </svg>
+
           {PIPELINE_NODES.map((n, i) => (
             <Card
               key={n.id}
@@ -306,10 +375,9 @@ function PipelineDiagram() {
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "center",
-                borderColor: stage === i ? "var(--color-accent)" : "var(--color-divider)",
+                borderColor: stageIndex === i ? "var(--color-accent)" : "var(--color-divider)",
               }}
             >
-              {stage === i && <PulseDot />}
               <div style={{ fontFamily: "var(--font-heading)", fontSize: 14, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.1 }}>
                 {n.label}
               </div>
@@ -331,21 +399,41 @@ function PipelineDiagram() {
                 display: "flex",
                 flexDirection: "column",
                 gap: 3,
-                borderColor: stage === PIPELINE_NODES.length && receiverIndex === i ? "var(--color-accent)" : "var(--color-divider)",
+                borderColor: stageIndex === PIPELINE_NODES.length && receiverIndex === i ? "var(--color-accent)" : "var(--color-divider)",
               }}
             >
-              {stage === PIPELINE_NODES.length && receiverIndex === i && <PulseDot />}
               <div style={{ fontFamily: "var(--font-heading)", fontSize: 14, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.1 }}>
                 {r.name}
               </div>
               <div style={{ fontSize: 11, lineHeight: "15px", color: "var(--color-text-muted)" }}>{r.url}</div>
               <div style={{ marginTop: "auto" }}>
-                <Badge tone={stage === PIPELINE_NODES.length && receiverIndex === i ? "accent" : "neutral"}>
-                  {stage === PIPELINE_NODES.length && receiverIndex === i ? "delivering" : "idle"}
+                <Badge tone={stageIndex === PIPELINE_NODES.length && receiverIndex === i ? "accent" : "neutral"}>
+                  {stageIndex === PIPELINE_NODES.length && receiverIndex === i ? "delivering" : "idle"}
                 </Badge>
               </div>
             </Card>
           ))}
+
+          {/* The traveling dot — its position is the ONE lerp between
+             `centerForIndex(stageIndex, ...)` and `centerForIndex(stageIndex
+             + 1, ...)`, the same stageIndex that colors the boxes' borders
+             above. There's no independent animation timeline here (no CSS
+             transition) — position and border both fall out of the same
+             `progress` value on every render, so they can't disagree. */}
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              left: `${dot.x}%`,
+              top: `${dot.y}%`,
+              width: 10,
+              height: 10,
+              marginLeft: -5,
+              marginTop: -5,
+              borderRadius: "50%",
+              background: "var(--color-accent)",
+            }}
+          />
         </div>
       </div>
 
