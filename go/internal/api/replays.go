@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,6 +16,20 @@ import (
 type replayRequest struct {
 	RangeStart string `json:"range_start"`
 	RangeEnd   string `json:"range_end"`
+}
+
+// parseUTCDatetime mirrors node/src/routes/replays.ts's z.string().datetime()
+// — Zod's default (no {offset: true}) accepts only a literal "Z" suffix,
+// rejecting a numeric UTC offset like "+01:00" even though that's valid
+// RFC3339. time.Parse(time.RFC3339, ...) alone would accept both, which is
+// a broader accepted-input set than Node's for the identical field — the
+// explicit suffix check closes that gap.
+func parseUTCDatetime(raw string) (time.Time, bool) {
+	if !strings.HasSuffix(raw, "Z") {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	return t, err == nil
 }
 
 // docs/adr/0005: replay mirrors publish's async two-phase shape exactly —
@@ -34,14 +49,14 @@ func (s *Server) createReplay(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
-	rangeStart, err := time.Parse(time.RFC3339, req.RangeStart)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "range_start must be an RFC3339 datetime")
+	rangeStart, ok := parseUTCDatetime(req.RangeStart)
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "range_start must be a UTC RFC3339 datetime")
 		return
 	}
-	rangeEnd, err := time.Parse(time.RFC3339, req.RangeEnd)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "range_end must be an RFC3339 datetime")
+	rangeEnd, ok := parseUTCDatetime(req.RangeEnd)
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "range_end must be a UTC RFC3339 datetime")
 		return
 	}
 	if rangeEnd.Before(rangeStart) {
@@ -50,10 +65,10 @@ func (s *Server) createReplay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	endpointID := r.PathValue("id")
-	var exists string
-	err = s.pool.QueryRow(r.Context(),
+	var foundEndpointID string
+	err := s.pool.QueryRow(r.Context(),
 		"SELECT id FROM endpoints WHERE id = $1 AND tenant_id = $2", endpointID, auth.TenantID(r),
-	).Scan(&exists)
+	).Scan(&foundEndpointID)
 	if fail(w, "createReplay: endpoint lookup", err, "Endpoint not found") {
 		return
 	}

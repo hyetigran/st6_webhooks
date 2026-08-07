@@ -98,6 +98,29 @@ func TestReplayRejectsRangeEndBeforeRangeStart(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+// Matches node's z.string().datetime() default (no {offset: true}): only a
+// literal "Z" suffix is accepted, not a numeric UTC offset — even though
+// "+01:00" is otherwise valid RFC3339.
+func TestReplayRejectsNonUTCOffsetDatetime(t *testing.T) {
+	pool := testsupport.SetupPool(t)
+	ts := newTestServer(t, pool)
+	tenantID, apiKey := testsupport.CreateTenant(t, pool)
+	endpointID := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{})
+
+	req, err := newJSONRequest(http.MethodPost, ts.URL+"/endpoints/"+endpointID+"/replays", map[string]any{
+		"range_start": "2026-01-01T00:00:00.000+01:00",
+		"range_end":   "2026-01-02T00:00:00.000Z",
+	})
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Idempotency-Key", "non-utc-offset")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
 func TestReplayReturnsNotFoundForMissingEndpoint(t *testing.T) {
 	pool := testsupport.SetupPool(t)
 	ts := newTestServer(t, pool)

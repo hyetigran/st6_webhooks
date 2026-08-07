@@ -65,6 +65,8 @@ func expandOneReplay(ctx context.Context, pool *pgxpool.Pool, replayID string) (
 	if err != nil {
 		return false, err
 	}
+	// Rollback after a successful Commit is a documented no-op in pgx, so
+	// this unconditional defer is safe on every exit path.
 	defer tx.Rollback(ctx)
 
 	var endpointID string
