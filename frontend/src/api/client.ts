@@ -37,13 +37,9 @@ export interface ApiClientOptions {
   fetchFn?: typeof fetch;
 }
 
-async function request<T>(
-  fetchFn: typeof fetch,
-  baseUrl: string,
-  apiKey: string,
-  path: string,
-  init: { method: string; body?: unknown; headers?: Record<string, string> },
-): Promise<T> {
+type RequestInit = { method: string; body?: unknown; headers?: Record<string, string> };
+
+async function request<T>(fetchFn: typeof fetch, baseUrl: string, apiKey: string, path: string, init: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     authorization: `Bearer ${apiKey}`,
     ...init.headers,
@@ -72,89 +68,78 @@ async function request<T>(
 /** `before` is this API's cursor query-param name on every list route
  * except the endpoint-queue view, which uses `after` (docs/adr/0007 —
  * ascending seq order, not newest-first). */
-function pageQuery(params: CursorPageParams | undefined, cursorParam: "before" | "after" = "before"): string {
+function pageQueryParams(params: CursorPageParams | undefined, cursorParam: "before" | "after" = "before"): URLSearchParams {
   const q = new URLSearchParams();
   if (params?.limit !== undefined) q.set("limit", String(params.limit));
   if (params?.cursor) q.set(cursorParam, params.cursor);
+  return q;
+}
+
+function toQueryString(q: URLSearchParams): string {
   const qs = q.toString();
   return qs ? `?${qs}` : "";
 }
 
 function eventSearchQuery(params: EventSearchParams | undefined): string {
-  const q = new URLSearchParams();
-  if (params?.limit !== undefined) q.set("limit", String(params.limit));
-  if (params?.cursor) q.set("before", params.cursor);
+  const q = pageQueryParams(params);
   if (params?.id) q.set("id", params.id);
   if (params?.type) q.set("type", params.type);
   if (params?.endpoint_id) q.set("endpoint_id", params.endpoint_id);
   if (params?.from) q.set("from", params.from);
   if (params?.to) q.set("to", params.to);
-  const qs = q.toString();
-  return qs ? `?${qs}` : "";
+  return toQueryString(q);
 }
 
 export function createApiClient({ baseUrl, apiKey, fetchFn = fetch }: ApiClientOptions) {
+  const call = <T>(path: string, init: RequestInit): Promise<T> => request<T>(fetchFn, baseUrl, apiKey, path, init);
+
   return {
     registerEndpoint(input: RegisterEndpointInput): Promise<RegisterEndpointResponse> {
-      return request<RegisterEndpointResponse>(fetchFn, baseUrl, apiKey, "/endpoints", { method: "POST", body: input });
+      return call("/endpoints", { method: "POST", body: input });
     },
 
     listEndpoints(params?: CursorPageParams): Promise<EndpointListResponse> {
-      return request<EndpointListResponse>(fetchFn, baseUrl, apiKey, `/endpoints${pageQuery(params)}`, { method: "GET" });
+      return call(`/endpoints${toQueryString(pageQueryParams(params))}`, { method: "GET" });
     },
 
     publishEvent(input: PublishEventInput, idempotencyKey: string): Promise<AsyncAcceptedResponse> {
-      return request<AsyncAcceptedResponse>(fetchFn, baseUrl, apiKey, "/events", {
-        method: "POST",
-        body: input,
-        headers: { "idempotency-key": idempotencyKey },
-      });
+      return call("/events", { method: "POST", body: input, headers: { "idempotency-key": idempotencyKey } });
     },
 
     getEndpoint(id: string): Promise<EndpointWithHealth> {
-      return request<EndpointWithHealth>(fetchFn, baseUrl, apiKey, `/endpoints/${id}`, { method: "GET" });
+      return call(`/endpoints/${id}`, { method: "GET" });
     },
 
     pauseEndpoint(id: string): Promise<Endpoint> {
-      return request<Endpoint>(fetchFn, baseUrl, apiKey, `/endpoints/${id}/pause`, { method: "POST" });
+      return call(`/endpoints/${id}/pause`, { method: "POST" });
     },
 
     resumeEndpoint(id: string): Promise<ResumeEndpointResponse> {
-      return request<ResumeEndpointResponse>(fetchFn, baseUrl, apiKey, `/endpoints/${id}/resume`, { method: "POST" });
+      return call(`/endpoints/${id}/resume`, { method: "POST" });
     },
 
     rotateSecret(id: string): Promise<RotateSecretResponse> {
-      return request<RotateSecretResponse>(fetchFn, baseUrl, apiKey, `/endpoints/${id}/secret/rotate`, { method: "POST" });
+      return call(`/endpoints/${id}/secret/rotate`, { method: "POST" });
     },
 
     listEvents(params?: EventSearchParams): Promise<EventListResponse> {
-      return request<EventListResponse>(fetchFn, baseUrl, apiKey, `/events${eventSearchQuery(params)}`, { method: "GET" });
+      return call(`/events${eventSearchQuery(params)}`, { method: "GET" });
     },
 
     getEvent(id: string): Promise<EventDetail> {
-      return request<EventDetail>(fetchFn, baseUrl, apiKey, `/events/${id}`, { method: "GET" });
+      return call(`/events/${id}`, { method: "GET" });
     },
 
     getDelivery(id: string): Promise<DeliveryDetail> {
-      return request<DeliveryDetail>(fetchFn, baseUrl, apiKey, `/deliveries/${id}`, { method: "GET" });
+      return call(`/deliveries/${id}`, { method: "GET" });
     },
 
     listEndpointDeliveries(endpointId: string, params?: CursorPageParams): Promise<EndpointDeliveriesResponse> {
-      return request<EndpointDeliveriesResponse>(
-        fetchFn,
-        baseUrl,
-        apiKey,
-        `/endpoints/${endpointId}/deliveries${pageQuery(params, "after")}`,
-        { method: "GET" },
-      );
+      return call(`/endpoints/${endpointId}/deliveries${toQueryString(pageQueryParams(params, "after"))}`, { method: "GET" });
     },
 
     triggerReplay(endpointId: string, input: TriggerReplayInput, idempotencyKey: string): Promise<AsyncAcceptedResponse> {
-      return request<AsyncAcceptedResponse>(fetchFn, baseUrl, apiKey, `/endpoints/${endpointId}/replays`, {
-        method: "POST",
-        body: input,
-        headers: { "idempotency-key": idempotencyKey },
-      });
+      return call(`/endpoints/${endpointId}/replays`, { method: "POST", body: input, headers: { "idempotency-key": idempotencyKey } });
     },
   };
 }

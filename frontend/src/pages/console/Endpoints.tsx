@@ -8,7 +8,7 @@ import { Button } from "../../design/Button";
 import { Card } from "../../design/Card";
 import { Modal } from "../../design/Modal";
 import "../../design/Table.css";
-import { formatPercent, formatRelativeTime } from "../../lib/format";
+import { formatDateTime, formatPercent, formatRelativeTime } from "../../lib/format";
 
 type RevealedSecret = { url: string; secret: string; overlapExpiresAt?: string };
 
@@ -21,6 +21,8 @@ export function Endpoints() {
   const [showRegister, setShowRegister] = useState(false);
   const [revealedSecret, setRevealedSecret] = useState<RevealedSecret | null>(null);
   const [resumeDisclosure, setResumeDisclosure] = useState<ResumeEndpointResponse | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const onActionError = (err: unknown) => setActionError(err instanceof Error ? err.message : "Action failed");
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey,
@@ -43,6 +45,7 @@ export function Endpoints() {
   const pauseMutation = useMutation({
     mutationFn: (id: string) => client!.pauseEndpoint(id),
     onSuccess: invalidate,
+    onError: onActionError,
   });
 
   const resumeMutation = useMutation({
@@ -51,6 +54,7 @@ export function Endpoints() {
       setResumeDisclosure(result);
       invalidate();
     },
+    onError: onActionError,
   });
 
   const rotateMutation = useMutation({
@@ -59,7 +63,10 @@ export function Endpoints() {
       const endpoint = data?.endpoints.find((e) => e.id === id);
       setRevealedSecret({ url: endpoint?.url ?? id, secret: result.signing_secret, overlapExpiresAt: result.overlap_expires_at });
     },
+    onError: onActionError,
   });
+
+  const busyEndpointId = [pauseMutation, resumeMutation, rotateMutation].find((m) => m.isPending)?.variables ?? null;
 
   if (!client) return null;
 
@@ -74,6 +81,17 @@ export function Endpoints() {
 
       {isLoading && <p>Loading…</p>}
       {isError && <p style={{ color: "var(--color-danger)" }}>Failed to load endpoints: {(error as Error).message}</p>}
+      {actionError && (
+        <p style={{ color: "var(--color-danger)" }}>
+          {actionError}{" "}
+          <button
+            onClick={() => setActionError(null)}
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-accent-700)", padding: 0 }}
+          >
+            Dismiss
+          </button>
+        </p>
+      )}
 
       {data && data.endpoints.length === 0 && (
         <Card>
@@ -104,11 +122,7 @@ export function Endpoints() {
                   onPause={() => pauseMutation.mutate(endpoint.id)}
                   onResume={() => resumeMutation.mutate(endpoint.id)}
                   onRotate={() => rotateMutation.mutate(endpoint.id)}
-                  busy={
-                    (pauseMutation.isPending && pauseMutation.variables === endpoint.id) ||
-                    (resumeMutation.isPending && resumeMutation.variables === endpoint.id) ||
-                    (rotateMutation.isPending && rotateMutation.variables === endpoint.id)
-                  }
+                  busy={busyEndpointId === endpoint.id}
                 />
               ))}
             </tbody>
@@ -132,7 +146,7 @@ export function Endpoints() {
           <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
             Shown once for <strong>{revealedSecret.url}</strong> — copy it now, it will not be shown again.
             {revealedSecret.overlapExpiresAt && (
-              <> The previous secret keeps verifying until {revealedSecret.overlapExpiresAt}.</>
+              <> The previous secret keeps verifying until {formatDateTime(revealedSecret.overlapExpiresAt)}.</>
             )}
           </p>
           <code

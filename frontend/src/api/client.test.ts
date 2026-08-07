@@ -196,4 +196,18 @@ describe("createApiClient", () => {
       range_end: "2026-01-02T00:00:00.000Z",
     });
   });
+
+  it("rotates an endpoint's signing secret, returning the new secret and its overlap-expiry (R-3)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, { signing_secret: "whsec_new", overlap_expires_at: "2026-01-02T00:00:00.000Z" }),
+    );
+    const client = createApiClient({ baseUrl: "http://localhost:3000", apiKey: "tenant_xyz", fetchFn: fetchMock });
+
+    const result = await client.rotateSecret("ep_1");
+
+    expect(result).toEqual({ signing_secret: "whsec_new", overlap_expires_at: "2026-01-02T00:00:00.000Z" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:3000/endpoints/ep_1/secret/rotate");
+    expect(init.method).toBe("POST");
+  });
 });
