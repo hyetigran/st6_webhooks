@@ -51,14 +51,29 @@ steps") — not a ticket, a decision-application step using data that now exists
   number, see `node/load/noisy-neighbor.ts`). Deliberately skipped the mockup's fully-interactive animated pipeline diagram
   (`#instrument` — region/backend/scenario pickers, live throughput/p99/worker stats) since replicating it needs either a real
   live-simulation backend or fabricated numbers; the existing static "The pipeline" card grid already covers the same content
-  honestly. Committed straight to `main` (`77a7edf`) — no ticket/MR. **Not live-verified in a browser this session** — the Chrome
-  extension wasn't connected; typecheck/lint/test/build are all clean and it only composes already-verified design primitives
-  (`Card`, `Badge`, `Button`), but an actual visual check is still owed next session.
+  honestly. Committed straight to `main` (`77a7edf`) — no ticket/MR.
+- **Landing page's centerpiece pipeline diagram, added after the user pushed back that it was still missing** — the mockup's
+  `#instrument` section (an interactive blueprint diagram: implementation/traffic-band/scenario pickers, play/pause, an
+  animated packet moving through the pipeline, a live stats panel) had been skipped in the prior pass on the assumption it
+  couldn't be done honestly. That assumption was wrong: the mockup carries its own disclaimer for this exact panel ("Time is
+  compressed and the dots are representative — the ordering and gating you see are the real ones"), so a client-side
+  simulation with the same disclaimer is consistent with the mockup's own framing, not a new compromise. Built as
+  `PipelineDiagram` in `frontend/src/pages/Landing.tsx` — same box layout/labels as the mockup, segmented controls, and a
+  900ms-tick animated dot stepping through the real stage sequence. Real inputs: the runtime toggle (matches the app's actual
+  Node/Go backend switcher, ADR-008), scenario names (the actual named tests under `node/{load,chaos}` and `go/{load,chaos}`),
+  worker count (3, matches `WORKER_COUNT` in every load/chaos harness), and the "Publish p99" stat (real numbers from
+  `evidence/load/publish-latency-flat.json` / `evidence/go/load/publish-latency-flat.json`, keyed by traffic band → event
+  level). Illustrative: Published/Queue depth/In flight/Delivered are a compressed-time simulation, stated in the panel's own
+  disclaimer line. Committed straight to `main` (`707f879`) — no ticket/MR.
+- **Neither landing-page pass has been live-verified in a real browser** — the Chrome extension wasn't connected in either
+  session; typecheck/lint/test/build are all clean and the new code only composes already-verified design primitives (`Card`,
+  `Badge`, `Button`), but an actual visual/interaction check (does the diagram's dot actually animate smoothly, do the
+  segmented controls read correctly at the mockup's `min-width: 1000px` diagram width) is still owed.
 
 ## Next steps
 
-- **Verify the landing page visually** in a real browser — skipped last session only because the Chrome extension wasn't
-  connected, not because it was low-risk enough to skip on purpose.
+- **Verify the landing page visually** in a real browser, especially the new `PipelineDiagram` — skipped twice in a row only
+  because the Chrome extension wasn't connected, not because it was judged low-risk enough to skip on purpose.
 
 - **Primary-build designation** (ticket `#14`'s already-decided criteria) is the one remaining
   piece of work on the whole project — both stacks now have real `make load` evidence
