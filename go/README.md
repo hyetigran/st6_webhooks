@@ -12,7 +12,11 @@ docker compose up -d postgres
 go run ./cmd/migrate
 go run ./cmd/seed              # prints a demo tenant's API key
 go run ./cmd/api                # listens on :8090
+go run ./cmd/worker             # shared worker pool (expansion so far)
 ```
+
+Tests need their own database (`webhooks_go_test`) — create it once, then run `make test` (not
+bare `go test ./...`; see the Makefile comment for why `-p 1` matters here).
 
 ## Stack
 

@@ -108,6 +108,22 @@ func createDelivery(t *testing.T, pool *pgxpool.Pool, tenantID, endpointID, stat
 	return deliveryID
 }
 
+// newJSONRequest builds a request with a JSON body and Content-Type set,
+// leaving Authorization/Idempotency-Key/etc for the caller — for tests that
+// need headers beyond what doRequest's fixed apiKey param covers.
+func newJSONRequest(method, url string, body any) (*http.Request, error) {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(method, url, bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
 func doRequest(t *testing.T, method, url, apiKey string, body any) *http.Response {
 	t.Helper()
 	var reader io.Reader
