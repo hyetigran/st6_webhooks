@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 
 	"github.com/joho/godotenv"
@@ -82,12 +83,20 @@ type ServerConfig struct {
 	Port int
 }
 
-// WorkerConfig tunes the poll loop's idle wait.
+// WorkerConfig tunes the poll loop's idle wait and concurrency.
 type WorkerConfig struct {
 	// How long to wait before polling again after a cycle found nothing to
 	// do. 0 when a cycle did find work, so the worker drains a backlog
 	// immediately rather than waiting out a full idle interval per item.
 	IdlePollIntervalMs int
+	// Number of concurrent poll-loop goroutines (docs/adr/0001's "ADR-001":
+	// Go was chosen partly to measure real multi-core scheduling behavior,
+	// which a single-threaded loop could never exercise). Every claim/
+	// complete/expansion query is already safe under concurrent execution
+	// (row locks, advisory locks, lease fencing), so goroutines share one
+	// pgxpool.Pool and one outbound *http.Transport with no extra
+	// coordination needed. Defaults to the machine's core count.
+	PoolSize int
 }
 
 // DBConfig is the Postgres connection string.
@@ -138,6 +147,7 @@ func Load() Config {
 		},
 		Worker: WorkerConfig{
 			IdlePollIntervalMs: envInt("WORKER_IDLE_POLL_INTERVAL_MS", 200),
+			PoolSize:           envInt("WORKER_POOL_SIZE", runtime.NumCPU()),
 		},
 		DB: DBConfig{
 			ConnectionString: envString("DATABASE_URL", "postgres://webhooks:webhooks@localhost:5533/webhooks_go", false),

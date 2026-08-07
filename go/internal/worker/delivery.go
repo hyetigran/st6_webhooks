@@ -18,6 +18,8 @@ import (
 	"webhooks-go/internal/signing"
 )
 
+// BackoffConfig is the full-jitter retry schedule (global-only for v0.2.0 —
+// per-endpoint tuning is out of scope).
 type BackoffConfig struct {
 	BaseDelayMs int
 	Multiplier  int
@@ -38,6 +40,9 @@ func ComputeBackoffDelayMs(attemptNumber int, cfg BackoffConfig, randFloat func(
 	return int(math.Floor(randFloat() * ceiling))
 }
 
+// ClaimedDelivery is everything RunDeliveryCycle needs to sign and send one
+// attempt, plus the lease/attempt bookkeeping CompleteDelivery fences its
+// write-back on.
 type ClaimedDelivery struct {
 	EndpointID      string
 	TenantID        string
@@ -138,62 +143,16 @@ func tryClaimEndpoint(ctx context.Context, pool *pgxpool.Pool, candidate candida
 	}
 
 	if candidate.Busy {
-		// Reclaiming a stale lease: the previous worker's attempt row
-		// (sent_at set, no response fields yet) must not strand the
-		// delivery.
-		if _, err := pool.Exec(ctx,
-			`UPDATE attempts SET error_class = 'worker_lease_expired'
-			 WHERE delivery_id = (SELECT id FROM deliveries WHERE endpoint_id = $1 AND state = 'in_flight')
-			   AND sent_at IS NOT NULL AND response_status IS NULL AND error_class IS NULL`,
-			candidate.ID,
-		); err != nil {
-			return nil, err
-		}
-		if _, err := pool.Exec(ctx,
-			"UPDATE deliveries SET state = 'pending' WHERE endpoint_id = $1 AND state = 'in_flight'",
-			candidate.ID,
-		); err != nil {
+		if err := reclaimStaleLease(ctx, pool, candidate.ID); err != nil {
 			return nil, err
 		}
 	}
 
-	var (
-		deliveryID               string
-		eventID                  string
-		attemptCount             int
-		nextAttemptAt            time.Time
-		eventType                string
-		payload                  json.RawMessage
-		endpointURL              string
-		signingSecretEnc         string
-		secondarySecretEnc       *string
-		secondarySecretExpiresAt *time.Time
-	)
-	// R-11: strict per-endpoint order means the *true* head — lowest seq,
-	// period — is always what's next, never a later delivery that merely
-	// happens to be immediately eligible. Filtering on next_attempt_at here
-	// (as an earlier version of this query did) would let a later delivery
-	// jump ahead of a head that's still cooling down from a prior failure's
-	// backoff. So: fetch the head unconditionally, then decide eligibility
-	// in application code below.
-	err = pool.QueryRow(ctx,
-		`SELECT d.id, d.event_id, d.attempt_count, d.next_attempt_at, e.type AS event_type, e.payload,
-		        ep.url, ep.signing_secret, ep.secondary_secret, ep.secondary_secret_expires_at
-		 FROM deliveries d
-		 JOIN events e ON e.id = d.event_id
-		 JOIN endpoints ep ON ep.id = d.endpoint_id
-		 WHERE d.endpoint_id = $1 AND d.state = 'pending'
-		 ORDER BY d.seq
-		 LIMIT 1`,
-		candidate.ID,
-	).Scan(&deliveryID, &eventID, &attemptCount, &nextAttemptAt, &eventType, &payload,
-		&endpointURL, &signingSecretEnc, &secondarySecretEnc, &secondarySecretExpiresAt)
-
-	noneFound := errors.Is(err, pgx.ErrNoRows)
-	if err != nil && !noneFound {
+	head, eligible, err := fetchClaimableHead(ctx, pool, candidate.ID)
+	if err != nil {
 		return nil, err
 	}
-	if noneFound || nextAttemptAt.After(time.Now()) {
+	if !eligible {
 		// Either nothing pending at all (the candidate filter guarantees
 		// this shouldn't happen, but release defensively rather than leave
 		// the endpoint stuck busy), or the true head just isn't ready yet —
@@ -207,51 +166,123 @@ func tryClaimEndpoint(ctx context.Context, pool *pgxpool.Pool, candidate candida
 		return nil, nil
 	}
 
-	attemptNumber := attemptCount + 1
+	attemptNumber := head.AttemptCount + 1
 	var attemptID string
 	if err := pool.QueryRow(ctx,
 		"INSERT INTO attempts (delivery_id, attempt_number, sent_at) VALUES ($1, $2, now()) RETURNING id",
-		deliveryID, attemptNumber,
+		head.DeliveryID, attemptNumber,
 	).Scan(&attemptID); err != nil {
 		return nil, err
 	}
 	if _, err := pool.Exec(ctx,
 		"UPDATE deliveries SET state = 'in_flight', attempt_count = $2 WHERE id = $1",
-		deliveryID, attemptNumber,
+		head.DeliveryID, attemptNumber,
 	); err != nil {
 		return nil, err
 	}
 
-	signingSecret, err := crypto.DecryptSecret(signingSecretEnc, secretEncryptionKey)
+	signingSecret, secondarySecret, err := decryptSecrets(head, secretEncryptionKey)
 	if err != nil {
 		return nil, err
-	}
-
-	var secondarySecret string
-	hasActiveSecondary := secondarySecretEnc != nil && secondarySecretExpiresAt != nil && secondarySecretExpiresAt.After(time.Now())
-	if hasActiveSecondary {
-		secondarySecret, err = crypto.DecryptSecret(*secondarySecretEnc, secretEncryptionKey)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return &ClaimedDelivery{
 		EndpointID:      candidate.ID,
 		TenantID:        candidate.TenantID,
 		LeaseID:         leaseID,
-		DeliveryID:      deliveryID,
-		EventID:         eventID,
-		EventType:       eventType,
-		Payload:         payload,
+		DeliveryID:      head.DeliveryID,
+		EventID:         head.EventID,
+		EventType:       head.EventType,
+		Payload:         head.Payload,
 		AttemptNumber:   attemptNumber,
 		AttemptID:       attemptID,
-		URL:             endpointURL,
+		URL:             head.URL,
 		SigningSecret:   signingSecret,
 		SecondarySecret: secondarySecret,
 	}, nil
 }
 
+// reclaimStaleLease closes the previous worker's orphaned in-flight attempt
+// (sent_at set, no response fields yet — it must not strand the delivery)
+// and requeues its delivery so the new claim below can pick it up.
+func reclaimStaleLease(ctx context.Context, pool *pgxpool.Pool, endpointID string) error {
+	if _, err := pool.Exec(ctx,
+		`UPDATE attempts SET error_class = 'worker_lease_expired'
+		 WHERE delivery_id = (SELECT id FROM deliveries WHERE endpoint_id = $1 AND state = 'in_flight')
+		   AND sent_at IS NOT NULL AND response_status IS NULL AND error_class IS NULL`,
+		endpointID,
+	); err != nil {
+		return err
+	}
+	_, err := pool.Exec(ctx, "UPDATE deliveries SET state = 'pending' WHERE endpoint_id = $1 AND state = 'in_flight'", endpointID)
+	return err
+}
+
+type headDeliveryRow struct {
+	DeliveryID               string
+	EventID                  string
+	AttemptCount             int
+	NextAttemptAt            time.Time
+	EventType                string
+	Payload                  json.RawMessage
+	URL                      string
+	SigningSecretEnc         string
+	SecondarySecretEnc       *string
+	SecondarySecretExpiresAt *time.Time
+}
+
+// fetchClaimableHead fetches an endpoint's true head delivery and reports
+// whether it's eligible to claim right now. R-11: strict per-endpoint order
+// means the true head — lowest seq, period — is always what's next, never a
+// later delivery that merely happens to be immediately eligible. Filtering
+// on next_attempt_at in the query itself (as an earlier version did) would
+// let a later delivery jump ahead of a head that's still cooling down from
+// a prior failure's backoff — found via chaos testing in the Node stack,
+// not by inspection. So: fetch the head unconditionally, decide eligibility
+// here in application code instead.
+func fetchClaimableHead(ctx context.Context, pool *pgxpool.Pool, endpointID string) (headDeliveryRow, bool, error) {
+	var row headDeliveryRow
+	err := pool.QueryRow(ctx,
+		`SELECT d.id, d.event_id, d.attempt_count, d.next_attempt_at, e.type AS event_type, e.payload,
+		        ep.url, ep.signing_secret, ep.secondary_secret, ep.secondary_secret_expires_at
+		 FROM deliveries d
+		 JOIN events e ON e.id = d.event_id
+		 JOIN endpoints ep ON ep.id = d.endpoint_id
+		 WHERE d.endpoint_id = $1 AND d.state = 'pending'
+		 ORDER BY d.seq
+		 LIMIT 1`,
+		endpointID,
+	).Scan(&row.DeliveryID, &row.EventID, &row.AttemptCount, &row.NextAttemptAt, &row.EventType, &row.Payload,
+		&row.URL, &row.SigningSecretEnc, &row.SecondarySecretEnc, &row.SecondarySecretExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return headDeliveryRow{}, false, nil
+	}
+	if err != nil {
+		return headDeliveryRow{}, false, err
+	}
+	return row, !row.NextAttemptAt.After(time.Now()), nil
+}
+
+func decryptSecrets(head headDeliveryRow, secretEncryptionKey []byte) (signingSecret, secondarySecret string, err error) {
+	signingSecret, err = crypto.DecryptSecret(head.SigningSecretEnc, secretEncryptionKey)
+	if err != nil {
+		return "", "", err
+	}
+	hasActiveSecondary := head.SecondarySecretEnc != nil && head.SecondarySecretExpiresAt != nil && head.SecondarySecretExpiresAt.After(time.Now())
+	if hasActiveSecondary {
+		secondarySecret, err = crypto.DecryptSecret(*head.SecondarySecretEnc, secretEncryptionKey)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return signingSecret, secondarySecret, nil
+}
+
+// AttemptOutcome is what CompleteDelivery writes back for one attempt —
+// either a real response (ResponseStatus set, ErrorClass "") or a network-
+// layer failure (ResponseStatus nil, ErrorClass one of httpclient.go's
+// ErrClass* constants, or "url_not_allowed" for a delivery-time SSRF
+// rejection).
 type AttemptOutcome struct {
 	ResponseStatus        *int
 	ResponseBodyTruncated string
@@ -286,7 +317,8 @@ func CompleteDelivery(ctx context.Context, pool *pgxpool.Pool, claimed *ClaimedD
 		return "", err
 	}
 	if leaseID == nil || *leaseID != claimed.LeaseID {
-		return CompleteOutcomeLeaseLost, tx.Rollback(ctx)
+		// The deferred Rollback above handles cleanup; nothing was written.
+		return CompleteOutcomeLeaseLost, nil
 	}
 
 	var errorClass *string
@@ -338,12 +370,15 @@ func CompleteDelivery(ctx context.Context, pool *pgxpool.Pool, claimed *ClaimedD
 	return outcome, nil
 }
 
+// OutboundConfig bounds the actual outbound webhook call (R-16).
 type OutboundConfig struct {
 	ConnectTimeoutMs     int
 	TotalTimeoutMs       int
 	MaxResponseBodyBytes int
 }
 
+// DeliveryConfig bundles every tunable RunDeliveryCycle needs, built once
+// by cmd/worker from the process's env-loaded config.
 type DeliveryConfig struct {
 	SecretEncryptionKey []byte
 	LeaseDurationMs     int
@@ -397,6 +432,20 @@ func RunDeliveryCycle(ctx context.Context, pool *pgxpool.Pool, cfg DeliveryConfi
 		result = AttemptOutcome{ErrorClass: "url_not_allowed"}
 	} else {
 		timestamp := time.Now().Unix()
+		// claimed.Payload is the raw jsonb bytes straight from Postgres
+		// (never decoded into a Go map and re-marshaled), so this is
+		// guaranteed to be exactly what gets signed AND exactly what's
+		// sent — immune to Go's json.Marshal alphabetizing map keys on
+		// re-encode, which could otherwise desync the signature from the
+		// wire body. This is why it won't byte-match Node's
+		// JSON.stringify()'d rawBody (Postgres's jsonb canonical text
+		// includes a space after `:`/`,`, compact JSON.stringify doesn't):
+		// the cross-backend "same HTTP surface" requirement
+		// (systemPatterns.md) is scoped to the REST API the shared
+		// frontend consumes, not to outbound webhook bodies delivered to a
+		// tenant's own receiver — each backend only needs to be
+		// self-consistent with what it signs and sends, which this
+		// guarantees by construction.
 		rawBody := string(claimed.Payload)
 		secretsList := []string{claimed.SigningSecret}
 		if claimed.SecondarySecret != "" {

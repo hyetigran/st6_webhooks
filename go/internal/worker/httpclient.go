@@ -101,6 +101,8 @@ func NewTransport(connectTimeoutMs, maxConnsPerHost int) *http.Transport {
 	}
 }
 
+// OutboundRequestOptions is one delivery attempt's request shape and
+// bounds, passed to SendOutboundRequest.
 type OutboundRequestOptions struct {
 	Method               string
 	Headers              map[string]string
@@ -127,6 +129,8 @@ const (
 	ErrClassConnectionError   = "connection_error"
 )
 
+// OutboundRequestResult is SendOutboundRequest's outcome — a real response
+// (ResponseStatus set) or a network-layer failure (ErrorClass set).
 type OutboundRequestResult struct {
 	ResponseStatus        *int
 	ResponseBodyTruncated string

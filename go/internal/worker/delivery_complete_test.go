@@ -75,7 +75,12 @@ func TestCompleteDeliveryReschedulesOnNon2xxBelowCeiling(t *testing.T) {
 	var nextAttemptAt time.Time
 	require.NoError(t, pool.QueryRow(ctx, "SELECT state, next_attempt_at FROM deliveries WHERE id = $1", deliveryID).Scan(&state, &nextAttemptAt))
 	require.Equal(t, "pending", state)
-	require.False(t, nextAttemptAt.Before(time.Now()))
+	// A generous tolerance, not an exact "now" comparison: full jitter can
+	// legitimately draw a delay near 0ms, and comparing a Postgres-written
+	// timestamp against this process's own clock a moment later is
+	// otherwise racy on exactly that draw — a tight bound would flake on
+	// the rare near-zero jitter, not on any real scheduling bug.
+	require.False(t, nextAttemptAt.Before(time.Now().Add(-500*time.Millisecond)))
 
 	var busy bool
 	var status string
