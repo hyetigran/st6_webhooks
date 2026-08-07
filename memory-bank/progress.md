@@ -184,6 +184,13 @@ not a replacement for it.
 - **All 8 Mermaid diagrams in `ARCHITECTURE.md`** validated against the real parser (not just
   visual inspection) — publish/expand/deliver, crash recovery (dead worker + stalled worker,
   two separate diagrams), replay, both state diagrams, the system overview, and the ER diagram.
+- **Console `Overview.tsx` dashboard content/presentation pass** (standalone, not a ticket) —
+  stat-card context captions + danger tone, severity-sorted "Needs attention," a Badge-based event
+  status column, and a new `design/Grid.css` giving the whole console its first responsive
+  breakpoints. See `activeContext.md` for the full rationale, what was deliberately skipped
+  (a "recent failures" panel — no tenant-wide deliveries endpoint), and the local port-3000
+  collision hit while verifying it live. On branch `worktree-dashboard-polish`, not yet merged
+  to `main`.
 
 ## What's built but not yet exercised end-to-end
 

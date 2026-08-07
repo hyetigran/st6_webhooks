@@ -86,9 +86,37 @@ steps") — not a ticket, a decision-application step using data that now exists
   dot holds still while "at" a receiver rather than flying back to the Publisher — that return trip isn't a real hand-off.
   Live-verified in Chrome: watched it glide along each leg across multiple ticks, confirmed no disagreement with the
   highlighted box, confirmed Pause freezes it mid-glide. Committed straight to `main` (`fec90db`) — no ticket/MR.
+- **Console dashboard (`Overview.tsx`) content/presentation pass** (standalone, user-requested review + "implement all" —
+  not a ticket) — the Overview page was visibly the weakest console screen next to the detail views (`EndpointDetail.tsx`/
+  `DeliveryDetail.tsx`), which already had dense, well-labeled real-data copy. Fixed: `StatCard` gained an optional `danger`
+  tone (used on "Endpoints needing you" when count > 0) and every stat card now carries a context caption (endpoint counts,
+  reporting coverage, halted/paused breakdown) instead of a bare number with no way to tell "zero" from "no data yet."
+  "Needs attention" now sorts halted before paused (severity, not API order); the Recent events status column uses the
+  existing `Badge` component instead of plain text (matching `EventDetail.tsx`'s own tone convention); the backend name is
+  bolded in the subhead so a stat is harder to misread against the wrong backend. New `design/Grid.css`
+  (`.app-grid-auto` via `auto-fit`/`minmax`, `.app-grid-split` with one stacking breakpoint at 860px) replaces every fixed
+  `gridTemplateColumns` inline style across the console (`Overview.tsx`, `EndpointDetail.tsx`, `DeliveryDetail.tsx`,
+  `EventDetail.tsx`) — grepping the whole `frontend/src` tree beforehand found **zero** `@media` queries anywhere, so none
+  of these screens degraded gracefully below their designed width. Deliberately did **not** add a "recent failures" panel
+  (the improvement that would have most directly served the support-engineer user) — no tenant-wide deliveries endpoint
+  exists (only per-endpoint/per-event), and `Overview.tsx`'s own existing comment already documents that an N+1 fan-out
+  fetch for a summary page was ruled out when `#30` first built this page; the severity-sorted Needs attention list is the
+  failure-visibility mechanism instead. Live-verified in Chrome: real Node-backend data end to end, and the responsive
+  breakpoint specifically (the extension's screenshot viewport doesn't track OS window resize, so confirmed via
+  `document.styleSheets` that the compiled `@media (max-width: 860px)` rule loaded, then force-applied it via an injected
+  `<style>` to screenshot the actual stacked layout). Also hit and worked around, not fixed: **port 3000 on this dev
+  machine is bound by an unrelated project** (`ghost-chess`, an Expo app at `/Users/tig/Desktop/tigran/ghost-chess`) — the
+  real webhooks Node API on this machine actually runs on **3001**, with the main frontend dev server started as
+  `VITE_NODE_API_URL=http://localhost:3001 npm run dev` to route around it. `frontend/src/lib/backend.tsx`'s hardcoded
+  `http://localhost:3000` default is otherwise correct as *shipped* config — this is purely a local-machine port
+  collision, not a bug, but worth knowing before assuming "everything's already running" from `lsof` port-name output
+  alone next time. Committed to branch `worktree-dashboard-polish` (`d53e24e`), not `main` — a background-job session
+  can't push to `main` directly; still needs a human merge.
 
 ## Next steps
 
+- **Merge or MR `worktree-dashboard-polish` (`d53e24e`) into `main`** — the console dashboard polish pass above is
+  committed and live-verified but not yet on `main`.
 - Nothing outstanding on the landing page — all three follow-up passes (evidence panel, pipeline diagram, dot/highlight fix)
   are live-verified and pushed.
 
