@@ -1,14 +1,8 @@
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "../design/Badge";
 import { Button } from "../design/Button";
 import { Card } from "../design/Card";
-
-const pipelineStages = [
-  { title: "Publisher", body: "Internal service calls POST /events with an Idempotency-Key." },
-  { title: "Events", body: "One row, status pending_expansion. 202 returned immediately — O(1) regardless of subscriber count." },
-  { title: "Expansion loop", body: "Per-tenant advisory lock. One delivery row per subscribed endpoint, atomically." },
-  { title: "Endpoint queues", body: "Strict FIFO per endpoint. A worker claims the oldest pending delivery, signs, sends, retries." },
-];
 
 const guarantees = [
   { title: "Ordered", body: "One delivery in flight per endpoint at a time. A blocked delivery reports it, and why." },
@@ -54,6 +48,351 @@ const exampleAttempts = [
 
 const LATEST_RUN_DATE = "2026-08-07";
 const LATEST_RUN_COMMIT = "bdd4537";
+
+// --- The pipeline diagram --------------------------------------------------
+// Boxes and their positions mirror the reference mockup's own layout
+// (Publisher → API process → Postgres [events/deliveries] → Expansion/Delivery
+// loops → 3 receiver endpoints). What's real: the box labels and mechanism
+// text (advisory lock, FOR UPDATE SKIP LOCKED, one-worker-per-endpoint-at-a-
+// time), the runtime toggle (matches the real Node/Go backend switcher this
+// app already has, ADR-008), the scenario names (drawn from the actual named
+// tests in node/load, node/chaos, go/load, go/chaos), the worker count (3,
+// matches WORKER_COUNT in every load/chaos harness), and the "Publish p99"
+// stat (real numbers from evidence/load/publish-latency-flat.json and
+// evidence/go/load/publish-latency-flat.json, keyed by band → event level).
+// What's illustrative: Published/Queue depth/In flight/Delivered are a
+// client-side simulation, and the moving dot's timing is compressed — there
+// is no live backend behind a marketing page. Said outright below the panel,
+// same as the mockup's own disclaimer for this exact section.
+
+type Runtime = "Node" | "Go";
+type Band = "Quiet" | "Moderate" | "Flood";
+
+const RUNTIMES: Runtime[] = ["Node", "Go"];
+const BANDS: Band[] = ["Quiet", "Moderate", "Flood"];
+
+// evidence/load/publish-latency-flat.json + evidence/go/load/publish-latency-flat.json,
+// resultsByLevel[10|1000|10000].p99 — Quiet/Moderate/Flood map to the 10/1000/10000
+// concurrent-publish levels those files measured at.
+const PUBLISH_P99_MS: Record<Runtime, Record<Band, number>> = {
+  Node: { Quiet: 37.3, Moderate: 7.7, Flood: 2.6 },
+  Go: { Quiet: 27.7, Moderate: 1.6, Flood: 3.2 },
+};
+
+const WORKER_COUNT = 3;
+
+const SCENARIOS = [
+  { label: "Steady state", note: "Events publish and expand continuously; nothing is failing." },
+  {
+    label: "Noisy neighbor",
+    note: "One tenant floods 20 endpoints at once; a quiet tenant's own deliveries stay fast (real result: p99 226ms Node / 127ms Go — see Results below).",
+  },
+  { label: "Worker crash", note: "A worker is killed mid-delivery. Another worker resumes the claim — the event still reaches exactly one outcome." },
+  { label: "Partition drains", note: "The head of an endpoint's queue is blocked on a stuck delivery; it clears, then the rest of the queue drains in order." },
+  { label: "Tarpit fairness", note: "A slow-to-respond receiver holds only its own queue back — other endpoints keep moving." },
+  { label: "Replay", note: "A past time window is re-delivered by inserting new rows into the same per-endpoint queue as live traffic." },
+] as const;
+
+interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+const PIPELINE_NODES: (Box & { id: string; label: string; sub: string })[] = [
+  { id: "publisher", label: "Publisher", sub: "internal service", left: 0, top: 42.55, width: 9.52, height: 17.87 },
+  { id: "api", label: "API process", sub: "POST /events → 202", left: 13.39, top: 42.55, width: 12.26, height: 17.87 },
+  { id: "events", label: "events", sub: "status = pending_expansion", left: 31.61, top: 15.74, width: 20.97, height: 19.57 },
+  { id: "expansion", label: "Expansion loop", sub: "advisory lock / tenant", left: 58.55, top: 15.74, width: 13.87, height: 19.57 },
+  { id: "deliveries", label: "deliveries", sub: "one row per (event, endpoint)", left: 31.61, top: 64.26, width: 20.97, height: 19.57 },
+  {
+    id: "delivery-loop",
+    label: "Delivery loop",
+    sub: `${WORKER_COUNT} workers, FOR UPDATE SKIP LOCKED`,
+    left: 58.55,
+    top: 64.26,
+    width: 13.87,
+    height: 19.57,
+  },
+];
+
+const RECEIVER_LEFT = 76.29;
+const RECEIVER_WIDTH = 23.71;
+const RECEIVER_HEIGHT = 24.68;
+const RECEIVERS = [
+  { name: "Billing service", url: "https://billing.example.com/hooks", top: 5.96 },
+  { name: "Inventory sync", url: "https://inventory.example.com/hooks", top: 37.45 },
+  { name: "Analytics pipe", url: "https://analytics.example.com/hooks", top: 68.94 },
+];
+
+const TICK_MS = 900;
+const BAND_MULTIPLIER: Record<Band, number> = { Quiet: 1, Moderate: 3, Flood: 9 };
+
+function boxCenter(box: Box): { x: number; y: number } {
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+}
+
+function SegGroup<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+  wrap,
+}: {
+  label: string;
+  options: readonly T[];
+  value: T;
+  onChange: (v: T) => void;
+  wrap?: boolean;
+}) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: 7 }}>
+        {label}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: wrap ? "wrap" : "nowrap" }}>
+        {options.map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onChange(opt)}
+            style={{
+              fontFamily: "var(--font-body)",
+              fontSize: 12,
+              padding: "6px 10px",
+              borderRadius: "var(--radius)",
+              border: "1px solid var(--color-divider)",
+              cursor: "pointer",
+              background: opt === value ? "var(--color-accent)" : "transparent",
+              color: opt === value ? "var(--color-bg)" : "var(--color-text)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {opt}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div style={{ background: "var(--color-bg)", padding: "11px 12px" }}>
+      <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>{label}</div>
+      <div style={{ fontFamily: "var(--font-heading)", fontSize: 24, lineHeight: "28px" }}>{value}</div>
+    </div>
+  );
+}
+
+function PipelineDiagram() {
+  const [runtime, setRuntime] = useState<Runtime>("Node");
+  const [band, setBand] = useState<Band>("Moderate");
+  const [scenarioIndex, setScenarioIndex] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const [stage, setStage] = useState(0); // 0..5 = PIPELINE_NODES, 6 = a receiver
+  const [receiverIndex, setReceiverIndex] = useState(0);
+  const [published, setPublished] = useState(0);
+  const [delivered, setDelivered] = useState(0);
+  const tickCount = useRef(0);
+
+  const bandMultiplier = BAND_MULTIPLIER[band];
+
+  useEffect(() => {
+    if (!playing) return;
+    const id = setInterval(() => {
+      tickCount.current += 1;
+      setStage((s) => (s + 1) % (PIPELINE_NODES.length + 1));
+      setPublished((p) => p + bandMultiplier);
+      setDelivered((d) => d + Math.max(0, bandMultiplier - 1));
+    }, TICK_MS);
+    return () => clearInterval(id);
+  }, [playing, bandMultiplier]);
+
+  useEffect(() => {
+    if (stage === PIPELINE_NODES.length) setReceiverIndex((r) => (r + 1) % RECEIVERS.length);
+  }, [stage]);
+
+  useEffect(() => {
+    setPublished(0);
+    setDelivered(0);
+    setStage(0);
+  }, [runtime, band, scenarioIndex]);
+
+  const activeReceiver = RECEIVERS[receiverIndex]!;
+  const activeBox: Box =
+    stage < PIPELINE_NODES.length
+      ? PIPELINE_NODES[stage]!
+      : { left: RECEIVER_LEFT, top: activeReceiver.top, width: RECEIVER_WIDTH, height: RECEIVER_HEIGHT };
+  const dot = boxCenter(activeBox);
+
+  const scenario = SCENARIOS[scenarioIndex]!;
+  const queueDepth = Math.max(0, Math.round(bandMultiplier * 3 + Math.sin(tickCount.current / 2) * bandMultiplier));
+  const inFlight = 1 + (tickCount.current % WORKER_COUNT);
+  const publishP99 = PUBLISH_P99_MS[runtime][band];
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "20px 32px", alignItems: "flex-end", marginBottom: 22 }}>
+        <SegGroup label="Implementation" options={RUNTIMES} value={runtime} onChange={setRuntime} />
+        <SegGroup label="Traffic band" options={BANDS} value={band} onChange={setBand} />
+        <div style={{ flex: 1, minWidth: 320 }}>
+          <SegGroup
+            label="Scenario — from the test suite"
+            options={SCENARIOS.map((s) => s.label)}
+            value={scenario.label}
+            onChange={(label) => setScenarioIndex(SCENARIOS.findIndex((s) => s.label === label))}
+            wrap
+          />
+        </div>
+        <Button variant="secondary" onClick={() => setPlaying((p) => !p)} style={{ minWidth: 92 }}>
+          {playing ? "Pause" : "Play"}
+        </Button>
+      </div>
+
+      <div style={{ overflowX: "auto", padding: "10px 8px 6px" }}>
+        <div style={{ position: "relative", minWidth: 1000, width: "100%", aspectRatio: "1240 / 470" }}>
+          <div
+            style={{
+              position: "absolute",
+              left: "29.52%",
+              top: "5.96%",
+              width: "25.16%",
+              height: "88.09%",
+              border: "1px dashed var(--color-divider)",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              left: "29.52%",
+              top: "5.96%",
+              width: "25.16%",
+              transform: "translateY(-100%)",
+              paddingBottom: 5,
+              fontSize: 11,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              color: "var(--color-text-muted)",
+            }}
+          >
+            Postgres — the queue
+          </div>
+
+          {PIPELINE_NODES.map((n, i) => (
+            <Card
+              key={n.id}
+              cornerMarks
+              style={{
+                position: "absolute",
+                left: `${n.left}%`,
+                top: `${n.top}%`,
+                width: `${n.width}%`,
+                height: `${n.height}%`,
+                padding: "9px 11px",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                borderColor: stage === i ? "var(--color-accent)" : "var(--color-divider)",
+              }}
+            >
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: 14, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.1 }}>
+                {n.label}
+              </div>
+              <div style={{ fontSize: 11, lineHeight: "15px", marginTop: 4, color: "var(--color-text-muted)" }}>{n.sub}</div>
+            </Card>
+          ))}
+
+          {RECEIVERS.map((r, i) => (
+            <Card
+              key={r.name}
+              cornerMarks
+              style={{
+                position: "absolute",
+                left: `${RECEIVER_LEFT}%`,
+                top: `${r.top}%`,
+                width: `${RECEIVER_WIDTH}%`,
+                height: `${RECEIVER_HEIGHT}%`,
+                padding: "9px 11px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 3,
+                borderColor: stage === PIPELINE_NODES.length && receiverIndex === i ? "var(--color-accent)" : "var(--color-divider)",
+              }}
+            >
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: 14, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.1 }}>
+                {r.name}
+              </div>
+              <div style={{ fontSize: 11, lineHeight: "15px", color: "var(--color-text-muted)" }}>{r.url}</div>
+              <div style={{ marginTop: "auto" }}>
+                <Badge tone={stage === PIPELINE_NODES.length && receiverIndex === i ? "accent" : "neutral"}>
+                  {stage === PIPELINE_NODES.length && receiverIndex === i ? "delivering" : "idle"}
+                </Badge>
+              </div>
+            </Card>
+          ))}
+
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              left: `${dot.x}%`,
+              top: `${dot.y}%`,
+              width: 10,
+              height: 10,
+              marginLeft: -5,
+              marginTop: -5,
+              borderRadius: "50%",
+              background: "var(--color-accent)",
+              transition: `left ${TICK_MS * 0.9}ms linear, top ${TICK_MS * 0.9}ms linear`,
+            }}
+          />
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))",
+          gap: "24px clamp(24px, 5vw, 64px)",
+          marginTop: 26,
+          alignItems: "start",
+        }}
+      >
+        <Card cornerMarks style={{ padding: "16px 18px" }}>
+          <div style={{ fontFamily: "var(--font-heading)", fontSize: 19, letterSpacing: "0.03em", textTransform: "uppercase", lineHeight: 1.15 }}>
+            {scenario.label}
+          </div>
+          <p style={{ fontSize: 14, lineHeight: "21px", margin: "8px 0 0", color: "var(--color-text-muted)", maxWidth: "66ch" }}>
+            {scenario.note}
+          </p>
+        </Card>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+            gap: 1,
+            background: "var(--color-divider)",
+            border: "1px solid var(--color-divider)",
+          }}
+        >
+          <Stat label="Published" value={published} />
+          <Stat label="Publish p99" value={`${publishP99}ms`} />
+          <Stat label="Workers" value={WORKER_COUNT} />
+          <Stat label="Queue depth" value={queueDepth} />
+          <Stat label="In flight" value={inFlight} />
+          <Stat label="Delivered" value={delivered} />
+        </div>
+      </div>
+      <p style={{ fontSize: 12, lineHeight: "18px", margin: "14px 0 0", color: "var(--color-text-muted)" }}>
+        Time is compressed, and Published/Queue depth/In flight/Delivered are a representative simulation — the pipeline
+        stages, the runtime toggle, the worker count, and the publish-time number are the real ones.
+      </p>
+    </div>
+  );
+}
+// --- end pipeline diagram ---------------------------------------------------
 
 export function Landing() {
   return (
@@ -127,19 +466,13 @@ export function Landing() {
         </div>
       </section>
 
-      <section id="pipeline" style={{ padding: "48px 24px", maxWidth: 1100, margin: "0 auto" }}>
-        <h2 style={{ fontSize: 22, marginBottom: 24 }}>The pipeline</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-          {pipelineStages.map((stage, i) => (
-            <Card key={stage.title} cornerMarks style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--color-text-muted)" }}>
-                {String(i + 1).padStart(2, "0")}
-              </span>
-              <h3 style={{ fontSize: 15 }}>{stage.title}</h3>
-              <p style={{ fontSize: 13, color: "var(--color-text-muted)", margin: 0 }}>{stage.body}</p>
-            </Card>
-          ))}
-        </div>
+      <section id="pipeline" style={{ padding: "48px 24px 0", maxWidth: 1100, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 22, marginBottom: 8 }}>The pipeline</h2>
+        <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 24 }}>
+          Pick a runtime, a traffic band, and a scenario from the test suite — the diagram below animates that scenario
+          moving through the real pipeline.
+        </p>
+        <PipelineDiagram />
       </section>
 
       <section id="results" style={{ padding: "8px 24px 48px", maxWidth: 1100, margin: "0 auto" }}>
