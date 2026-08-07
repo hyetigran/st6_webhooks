@@ -92,6 +92,14 @@ not a replacement for it.
   `*http.Transport` with no extra coordination. Live-verified: real delivery to httpbin.org, and a
   concurrency check (5 endpoints × 5 events, multiple simultaneous `in_flight` deliveries observed
   mid-run — real parallelism).
+- **Go — replay** (`#25`): `POST /endpoints/{id}/replays` mirrors publish's async two-phase shape
+  exactly (`docs/adr/0005`, not the ticket's stale synchronous-creation wording — same correction
+  Node's `#19` needed). `internal/worker.RunReplayExpansionCycle`: plain `FOR UPDATE SKIP LOCKED`
+  (no advisory lock needed, unlike event expansion), excludes still-`pending`/`in_flight`
+  originals, fresh delivery rows reusing the original `event_id` in original chronological order
+  via `deliveries.seq`. Wired into `go/cmd/worker`'s poll loop. Live-verified: replayed a real
+  previously-delivered event (postman-echo.com) through the actual running worker, watched a
+  fresh delivery row get created and successfully redelivered.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -108,10 +116,10 @@ Compose deployment. Node is done.
 
 ## What doesn't exist yet
 
-- **Go**: `#22`-`#24` (schema/scaffolding/endpoint API, publish & async expansion, delivery
-  worker) are done — see "What works" above. `#25`-`#27` (replay, visibility, test suite &
-  deployment) are not yet built, mirroring Node ticket-for-ticket including every review-driven
-  fix, not the pre-review design. Go's own "Test suite & deployment" ticket (`#27`)
+- **Go**: `#22`-`#25` (schema/scaffolding/endpoint API, publish & async expansion, delivery
+  worker, replay) are done — see "What works" above. `#26`-`#27` (visibility & read API, test
+  suite & deployment) are not yet built, mirroring Node ticket-for-ticket including every
+  review-driven fix, not the pre-review design. Go's own "Test suite & deployment" ticket (`#27`)
   must build the identical PRD §8 suite — see
   `activeContext.md`'s "What just happened" for the full shape `#21` established (`make test`/
   `properties`/`chaos`/`load`/`verify`, real spawned processes/signals for chaos, real spawned
@@ -247,3 +255,16 @@ Compose deployment. Node is done.
   normal test runs). Fix: give timestamp-freshness assertions a small tolerance (e.g. `time.Now().
   Add(-500*time.Millisecond)`) instead of an exact instant — still catches a real scheduling bug,
   not sensitive to sub-second timing races.
+- **Go's `time.Parse(time.RFC3339, ...)` accepts a broader set of inputs than Node's
+  `z.string().datetime()` default for an inbound timestamp field** — RFC3339 itself permits any
+  numeric UTC offset (`+01:00`, `-05:00`), and Go's parser correctly allows that. But Zod's
+  `.datetime()` validator, *without* the `{offset: true}` option, only accepts a literal `Z`
+  suffix — an offset like `+01:00` is `400` in Node. Found in Go's `#25` (`range_start`/
+  `range_end` on `POST /endpoints/{id}/replays`): a bare `time.Parse(time.RFC3339, ...)` silently
+  accepted input the Node stack rejects, a real REST-surface divergence. Fix: explicitly require
+  the string end in `"Z"` before parsing (see `go/internal/api/replays.go`'s `parseUTCDatetime`).
+  **Any future Go route accepting a client-supplied timestamp string must do the same check** —
+  this will matter again for `#26`'s `GET /events`'s `from`/`to` query params, which Node's
+  `events.ts` doesn't schema-validate at all (passed straight through as query strings into a SQL
+  comparison), so there's no Zod behavior to match there — but any *body* field parsed the same
+  way as replay's `range_start`/`range_end` needs this same explicit `Z`-suffix check.
