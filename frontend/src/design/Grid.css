@@ -1,0 +1,23 @@
+/* Shared responsive grid classes. `auto-fit`/`minmax` reflows column count
+   to available width on its own (no explicit breakpoints needed) for the
+   fixed-count stat/field rows every console detail screen uses.
+   `.app-grid-split` is the one layout with an intentional ratio (1fr 2fr)
+   that auto-fit can't express, so it gets one explicit breakpoint that
+   stacks it instead of squeezing both columns illegibly thin. */
+.app-grid-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.app-grid-split {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 24px;
+}
+
+@media (max-width: 860px) {
+  .app-grid-split {
+    grid-template-columns: 1fr;
+  }
+}

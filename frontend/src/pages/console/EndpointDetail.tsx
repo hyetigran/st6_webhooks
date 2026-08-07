@@ -8,6 +8,7 @@ import { Button } from "../../design/Button";
 import { Card } from "../../design/Card";
 import { ErrorState } from "../../design/ErrorState";
 import { Field } from "../../design/Field";
+import "../../design/Grid.css";
 import { LoadingState } from "../../design/LoadingState";
 import "../../design/Table.css";
 import { deliveryTone, nextAttemptDisplay } from "../../lib/deliveryDisplay";
@@ -120,7 +121,7 @@ export function EndpointDetail() {
             </Card>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
+          <div className="app-grid-auto" style={{ marginBottom: 20 }}>
             <Field label="Queue depth" value={String(endpoint.queue_depth)} />
             <Field label="Oldest pending" value={formatRelativeTime(endpoint.oldest_pending_at)} />
             <Field label="Success rate (last 50)" value={formatPercent(endpoint.recent_success_rate)} />
