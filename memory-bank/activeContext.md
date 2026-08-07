@@ -86,11 +86,83 @@ steps") — not a ticket, a decision-application step using data that now exists
   dot holds still while "at" a receiver rather than flying back to the Publisher — that return trip isn't a real hand-off.
   Live-verified in Chrome: watched it glide along each leg across multiple ticks, confirmed no disagreement with the
   highlighted box, confirmed Pause freezes it mid-glide. Committed straight to `main` (`fec90db`) — no ticket/MR.
+- **Pipeline diagram's wiring redrawn to match the mockup pixel-for-pixel** (user asked to "review design mockups and
+  replicate the pipeline section pixel perfect") — rendered `design mockups/Gauntlet Relay Landing.dc.html` live in Chrome
+  (via a local `python3 -m http.server`, since `file://` is blocked for the extension and the mockup needs its own
+  `support.js`/`_ds_bundle.js` runtime to render the `{{ }}` bindings) and found three real fidelity gaps against the
+  built `PipelineDiagram` (`frontend/src/pages/Landing.tsx`): (1) `SegGroup` rendered as separate gapped pill buttons
+  instead of the mockup's `.seg`/`.seg-opt` — one joined, bordered control with divider lines between options; (2) the
+  connector lines between boxes were straight diagonals, not the mockup's right-angle "circuit-board" routing with
+  dashed vs. solid edges and small arrowheads; (3) the receiver status tag used the shared `Badge` component's flat
+  neutral-gray styling for both states, where the mockup's `tag-accent` (delivering) is filled `--color-accent-100`/
+  `--color-accent-800` and its `tag-outline` (idle) is a bordered, transparent-fill pill — `Badge`'s own comment claims
+  it matches the mockup, but doesn't once actually screenshotted live. Fixed all three, scoped entirely to
+  `Landing.tsx`: rebuilt `SegGroup` as the joined control; replaced the diagonal-line SVG with a `WIRES` backdrop of
+  orthogonal polylines (`elbowH`/`elbowV` helpers) plus one added dashed Expansion→deliveries edge (a true relationship
+  the mockup leaves implicit rather than wiring explicitly — added so the traveling dot always rides a visible line for
+  every hop rather than cutting a diagonal through open space for that one leg); added a local `PipelineTag` component
+  instead of touching the shared `Badge` (which is used across every dashboard view with its own deliberate flat-badge
+  rationale — changing its default would have ripple effects well outside this section's scope). The traveling dot's
+  hard-won continuity invariant (see the two fixes above) is preserved: each hop's point-array still starts and ends at
+  a box **center**, so consecutive hops share an exact endpoint — only the path *between* those centers now bends
+  through the same edge points the backdrop wire uses, via a new arc-length-parametrized `pointAlongPath`, rather than
+  lerping straight center-to-center. Live-verified in Chrome side-by-side against the rendered mockup at 1440px:
+  segmented controls, dashed/solid wire styling, arrowhead direction, and both tag states (idle outline / delivering
+  filled) all confirmed matching; watched the dot ride multiple hops with no jump or desync. `npx tsc -b --noEmit` and
+  `npx vitest run` both clean. Not yet committed — sitting as uncommitted changes in the working tree.
+
+- **Two real bugs the user caught by eye after the wiring pass above, both fixed the same session**: (1) traffic-band labels
+  were "Quiet"/"Moderate"/"Flood" (a paraphrase, kept from before the pixel-fidelity pass) instead of the mockup's literal
+  "1K"/"10K"/"1M+" — renamed the `Band` type and every `Record<Band, …>` keyed by it (`BAND_MULTIPLIER`, `PUBLISH_P99_MS`),
+  same underlying evidence-file mapping (10/1000/10000 concurrent-publish levels), just matching the mockup's own text now.
+  (2) "the scenario suite is overflowing on second row" — real, reproduced via direct `getBoundingClientRect` measurement
+  (visual screenshots at the widths tried didn't show it clearly; `resize_window` wasn't reliably changing `innerWidth` in
+  this session's Chrome instance, so the repro had to go through injected DOM measurement instead of eyeballing). Root
+  cause: the controls row's `alignItems: "flex-end"` (copied faithfully from the mockup) is only harmless in the mockup's
+  own 1440px-wide layout where the scenario segmented control never wraps; this app's narrower 1100px content column plus
+  longer scenario labels (`"Partition drains"`, `"Tarpit fairness"` vs. the mockup's shorter placeholders) make it wrap to
+  two lines routinely, and `flex-end` then pulls the single-row Implementation/Traffic-band columns down to align with the
+  *wrapped* column's full height — landing their buttons even with the scenario row's second line instead of its first.
+  Fixed by anchoring the row to `flex-start` and bottom-aligning only the Pause/Play button via its own `alignSelf:
+  "flex-end"` (preserves the original flush-bottom look for that button when nothing wraps, without dragging the other
+  columns down when something does). Confirmed via the same DOM-measurement technique: Implementation/Traffic-band/
+  scenario-row-1 all now share the same `top`, at both a wrapped width and the original full width.
+
+- **Single traveling dot replaced with a many-packet stream** (user: "only one blue dot travels through the pipeline. design
+  shows dozens to hundreds passing") — correct, and something the very first pixel-fidelity pass had already noticed and
+  chosen not to build, on the assumption it was out of scope; the user's follow-up made it in-scope. Pulled the single
+  dot's position math (stageIndex/lap/receiverIndex/t/point, all derived from one continuous `progress`) out into a
+  standalone `packetState(p)` (`frontend/src/pages/Landing.tsx`), then render `packetCount = bandMultiplier * 12` packets —
+  each just `packetState(progress + i * phaseStep)`, phase-shifted copies of the same clock spread evenly across the full
+  cyclic path length — instead of one. Reuses `BAND_MULTIPLIER` (already real: same multiplier the stat counters use), so
+  1K/10K/1M+ render 12/36/108 concurrent dots — sparse-but-present up to a genuinely dense continuous stream, matching what
+  the mockup's own diagram shows at higher bands. Box/receiver highlighting changed from "does the one dot's stageIndex
+  match this box" to "does ANY packet currently occupy this box" (`activeNodeStages`/`activeReceivers` sets built once per
+  render) — with dozens of packets in flight, several boxes legitimately light up at once now, which is more honest than
+  pretending only one box is ever active. The continuity guarantee from the wiring pass still holds per-packet (each one
+  still starts/ends every hop at a box center via `HOP_PATHS`) — no new per-packet state, no CSS transitions, still a pure
+  function of one `progress` value. Live-verified in Chrome across all three bands: 1K reads as "a few," 10K as "dozens,"
+  1M+ as a dense stream filling every wire simultaneously; no console errors at 108 concurrent packets. `npx tsc -b
+  --noEmit`, `npx oxlint`, `npx vitest run` all clean.
+
+- **1M+ band's packets moved at the same pace as 1K's** (user: "the dots move extremely slow") — real gap: `progress`
+  advanced at one fixed rate (`FRAME_MS/TICK_MS` per interval tick) regardless of band, so the only thing that scaled with
+  traffic was packet *count*, not speed — 108 packets crawling at the same one-stage-per-900ms pace as 12 packets read as
+  sluggish for the "extreme throughput" band. Fixed by multiplying the per-tick `progress` increment by the same
+  `bandMultiplier` already driving packet count (`frontend/src/pages/Landing.tsx`'s `progress` interval effect, now
+  depending on `bandMultiplier` too so switching bands actually retunes the running interval) — not a second invented
+  number: 1M+ moving 9x faster than 1K is the identical real ratio already behind 9x the packet count, and it happens to
+  agree with the real evidence too (`PUBLISH_P99_MS` genuinely drops at higher concurrency in this app's own load tests).
+  Live-verified in Chrome: switched to 1M+, watched the published/delivered counters and the active receiver visibly
+  advance within about a second (45→117 published, receiver highlight moved from Billing Service to Inventory Sync) —
+  clearly faster than before, motion still smooth, no console errors. `npx tsc -b --noEmit`, `npx oxlint`, `npx vitest
+  run` all clean.
 
 ## Next steps
 
-- Nothing outstanding on the landing page — all three follow-up passes (evidence panel, pipeline diagram, dot/highlight fix)
-  are live-verified and pushed.
+- **The pipeline-wiring pass above (plus this session's four follow-up fixes) is uncommitted** — review and commit when ready.
+- Otherwise nothing outstanding on the landing page — all follow-up passes (evidence panel, pipeline diagram,
+  dot/highlight fix, dot restore, wiring pixel-fidelity pass) are live-verified.
 
 - **Primary-build designation** (ticket `#14`'s already-decided criteria) is the one remaining
   piece of work on the whole project — both stacks now have real `make load` evidence
