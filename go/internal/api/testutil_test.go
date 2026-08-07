@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,10 +16,6 @@ import (
 	"webhooks-go/internal/testsupport"
 )
 
-// 32 raw bytes — AES-256-GCM's exact key length. Test-only; production reads
-// this from SECRET_ENCRYPTION_KEY via config.SecretEncryptionKey().
-var testSecretKey = []byte("abcdefghijklmnopqrstuvwxyz012345")
-
 var (
 	setupPool      = testsupport.SetupPool
 	createTenant   = testsupport.CreateTenant
@@ -29,34 +24,17 @@ var (
 
 func newTestServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	t.Helper()
-	srv := api.NewServer(pool, testSecretKey, config.SecretRotationConfig{OverlapHours: 24})
+	srv := api.NewServer(pool, testsupport.SecretEncryptionKey, config.SecretRotationConfig{OverlapHours: 24})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }
 
-// createDelivery inserts a delivery row directly (an event is required by
-// the foreign key but its content doesn't matter for endpoint-route tests).
+// createDelivery only needs the delivery id — endpoint-route tests
+// (pause/resume disclosure) don't care about the backing event.
 func createDelivery(t *testing.T, pool *pgxpool.Pool, tenantID, endpointID, state string) string {
-	t.Helper()
-	ctx := context.Background()
-
-	var eventID string
-	err := pool.QueryRow(ctx,
-		`INSERT INTO events (tenant_id, idempotency_key, type, payload, status)
-		 VALUES ($1, gen_random_uuid()::text, 'order.created', '{}', 'expanded')
-		 RETURNING id`,
-		tenantID,
-	).Scan(&eventID)
-	require.NoError(t, err)
-
-	var deliveryID string
-	err = pool.QueryRow(ctx,
-		`INSERT INTO deliveries (event_id, endpoint_id, state) VALUES ($1, $2, $3) RETURNING id`,
-		eventID, endpointID, state,
-	).Scan(&deliveryID)
-	require.NoError(t, err)
-	return deliveryID
+	id, _ := testsupport.CreateDelivery(t, pool, tenantID, endpointID, testsupport.DeliveryOptions{State: state})
+	return id
 }
 
 // newJSONRequest builds a request with a JSON body and Content-Type set,

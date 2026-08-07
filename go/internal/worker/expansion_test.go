@@ -14,8 +14,8 @@ func TestRunExpansionCycleCreatesOneDeliveryPerSubscribedEndpoint(t *testing.T) 
 	pool := testsupport.SetupPool(t)
 	ctx := context.Background()
 	tenantID, _ := testsupport.CreateTenant(t, pool)
-	endpointA := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "")
-	endpointB := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "")
+	endpointA := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{})
+	endpointB := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{})
 	eventID := publishEvent(t, pool, tenantID, "order.created", "key-1")
 
 	did, err := worker.RunExpansionCycle(ctx, pool)
@@ -41,7 +41,7 @@ func TestRunExpansionCycleFlipsStatusEvenWithNoSubscribers(t *testing.T) {
 	pool := testsupport.SetupPool(t)
 	ctx := context.Background()
 	tenantID, _ := testsupport.CreateTenant(t, pool)
-	testsupport.CreateEndpoint(t, pool, tenantID, []string{"payment.failed"}, "") // not subscribed to order.created
+	testsupport.CreateEndpoint(t, pool, tenantID, []string{"payment.failed"}, testsupport.EndpointOptions{}) // not subscribed to order.created
 	eventID := publishEvent(t, pool, tenantID, "order.created", "key-2")
 
 	did, err := worker.RunExpansionCycle(ctx, pool)
@@ -61,7 +61,7 @@ func TestRunExpansionCycleExpandsInPublishOrderAcrossSeparateCalls(t *testing.T)
 	pool := testsupport.SetupPool(t)
 	ctx := context.Background()
 	tenantID, _ := testsupport.CreateTenant(t, pool)
-	endpointID := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "")
+	endpointID := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{})
 	firstEventID := publishEvent(t, pool, tenantID, "order.created", "seq-key-1")
 	secondEventID := publishEvent(t, pool, tenantID, "order.created", "seq-key-2")
 
@@ -87,8 +87,8 @@ func TestRunExpansionCycleQueuesDeliveriesForPausedAndHaltedEndpoints(t *testing
 	pool := testsupport.SetupPool(t)
 	ctx := context.Background()
 	tenantID, _ := testsupport.CreateTenant(t, pool)
-	pausedEndpoint := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "paused")
-	haltedEndpoint := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, "halted")
+	pausedEndpoint := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{Status: "paused"})
+	haltedEndpoint := testsupport.CreateEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{Status: "halted"})
 	eventID := publishEvent(t, pool, tenantID, "order.created", "key-status-test")
 
 	did, err := worker.RunExpansionCycle(ctx, pool)
