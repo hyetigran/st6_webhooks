@@ -6,7 +6,9 @@ import { Badge } from "../../design/Badge";
 import { Breadcrumb } from "../../design/Breadcrumb";
 import { Button } from "../../design/Button";
 import { Card } from "../../design/Card";
+import { ErrorState } from "../../design/ErrorState";
 import { Field } from "../../design/Field";
+import { LoadingState } from "../../design/LoadingState";
 import "../../design/Table.css";
 import { deliveryTone, nextAttemptDisplay } from "../../lib/deliveryDisplay";
 import { formatDateTime, formatPercent, formatRelativeTime } from "../../lib/format";
@@ -49,12 +51,15 @@ export function EndpointDetail() {
     setActionError,
   } = useEndpointActions([endpointQueryKey, queueQueryKey]);
 
-  const { replayTarget, setReplayTarget, replayResult, setReplayResult, replayMutation } = useReplayAction([queueQueryKey]);
+  const { replayTarget, setReplayTarget, replayResult, setReplayResult, replayMutation } = useReplayAction([
+    endpointQueryKey,
+    queueQueryKey,
+  ]);
 
   if (!client) return null;
   const endpoint = endpointQuery.data;
   const queue = queueQuery.data;
-  const busy = pauseMutation.isPending || resumeMutation.isPending || rotateMutation.isPending;
+  const busy = pauseMutation.isPending || resumeMutation.isPending || rotateMutation.isPending || replayMutation.isPending;
 
   return (
     <div>
@@ -62,10 +67,8 @@ export function EndpointDetail() {
         <Link to="/console/endpoints">Endpoints</Link>
       </Breadcrumb>
 
-      {endpointQuery.isLoading && <p>Loading…</p>}
-      {endpointQuery.isError && (
-        <p style={{ color: "var(--color-danger)" }}>Failed to load endpoint: {(endpointQuery.error as Error).message}</p>
-      )}
+      {endpointQuery.isLoading && <LoadingState />}
+      {endpointQuery.isError && <ErrorState message={`Failed to load endpoint: ${(endpointQuery.error as Error).message}`} />}
       {actionError && <ActionErrorBanner message={actionError} onDismiss={() => setActionError(null)} />}
 
       {endpoint && (
@@ -120,7 +123,8 @@ export function EndpointDetail() {
       )}
 
       <h2 style={{ fontSize: 18, marginBottom: 12 }}>Pending deliveries, in publication order</h2>
-      {queueQuery.isLoading && <p>Loading…</p>}
+      {queueQuery.isLoading && <LoadingState />}
+      {queueQuery.isError && <ErrorState message={`Failed to load the queue: ${(queueQuery.error as Error).message}`} />}
       {queue && queue.deliveries.length === 0 && (
         <Card>
           <p style={{ margin: 0, color: "var(--color-text-muted)" }}>Nothing in this endpoint's queue right now.</p>

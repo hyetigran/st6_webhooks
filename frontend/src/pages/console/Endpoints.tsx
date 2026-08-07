@@ -7,6 +7,8 @@ import { useBackend } from "../../lib/backend";
 import { Badge } from "../../design/Badge";
 import { Button } from "../../design/Button";
 import { Card } from "../../design/Card";
+import { ErrorState } from "../../design/ErrorState";
+import { LoadingState } from "../../design/LoadingState";
 import { Modal } from "../../design/Modal";
 import "../../design/Table.css";
 import { formatPercent, formatRelativeTime } from "../../lib/format";
@@ -65,8 +67,8 @@ export function Endpoints() {
         </Button>
       </div>
 
-      {isLoading && <p>Loading…</p>}
-      {isError && <p style={{ color: "var(--color-danger)" }}>Failed to load endpoints: {(error as Error).message}</p>}
+      {isLoading && <LoadingState />}
+      {isError && <ErrorState message={`Failed to load endpoints: ${(error as Error).message}`} />}
       {actionError && <ActionErrorBanner message={actionError} onDismiss={() => setActionError(null)} />}
 
       {data && data.endpoints.length === 0 && (
@@ -99,7 +101,10 @@ export function Endpoints() {
                   onResume={() => resumeMutation.mutate(endpoint.id)}
                   onRotate={() => rotateMutation.mutate({ id: endpoint.id, url: endpoint.url })}
                   onReplay={() => setReplayTarget({ id: endpoint.id, url: endpoint.url })}
-                  busy={busyEndpointId === endpoint.id}
+                  busy={
+                    busyEndpointId === endpoint.id ||
+                    (replayMutation.isPending && replayMutation.variables?.endpointId === endpoint.id)
+                  }
                 />
               ))}
             </tbody>

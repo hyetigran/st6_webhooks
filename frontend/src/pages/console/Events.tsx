@@ -4,6 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { useApiClient } from "../../api/useApiClient";
 import { useBackend } from "../../lib/backend";
 import { Card } from "../../design/Card";
+import { ErrorState } from "../../design/ErrorState";
+import { LoadingState } from "../../design/LoadingState";
 import "../../design/Table.css";
 import { formatDateTime } from "../../lib/format";
 
@@ -42,8 +44,8 @@ export function Events() {
         />
       </div>
 
-      {isLoading && <p>Loading…</p>}
-      {isError && <p style={{ color: "var(--color-danger)" }}>Failed to load events: {(error as Error).message}</p>}
+      {isLoading && <LoadingState />}
+      {isError && <ErrorState message={`Failed to load events: ${(error as Error).message}`} />}
 
       {data && data.events.length === 0 && (
         <Card>

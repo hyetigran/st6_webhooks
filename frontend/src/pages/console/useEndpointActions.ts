@@ -5,6 +5,12 @@ import type { ResumeEndpointResponse } from "../../api/types";
 
 export type RevealedSecret = { url: string; secret: string; overlapExpiresAt?: string };
 
+/** id+url travel together at every call site that needs to both act on an
+ * endpoint and label a resulting modal with its URL (rotate-secret,
+ * replay) — named here instead of repeating the pair as an inline object
+ * type at each site. */
+export type EndpointRef = { id: string; url: string };
+
 /** Shared pause/resume/rotate-secret mutations and their result/error UI
  * state — used by both the endpoints list (Endpoints.tsx) and the single-
  * endpoint queue view (EndpointDetail.tsx), so this logic exists once.
@@ -38,7 +44,7 @@ export function useEndpointActions(queryKeys: QueryKey[]) {
   });
 
   const rotateMutation = useMutation({
-    mutationFn: (vars: { id: string; url: string }) => client!.rotateSecret(vars.id),
+    mutationFn: (vars: EndpointRef) => client!.rotateSecret(vars.id),
     onSuccess: (result, vars) => {
       setRevealedSecret({ url: vars.url, secret: result.signing_secret, overlapExpiresAt: result.overlap_expires_at });
       invalidate();
