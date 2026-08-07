@@ -5,9 +5,11 @@ import { useBackend } from "../../lib/backend";
 import { Badge } from "../../design/Badge";
 import { Card } from "../../design/Card";
 import { ErrorState } from "../../design/ErrorState";
+import "../../design/Grid.css";
 import { LoadingState } from "../../design/LoadingState";
 import { StatCard } from "../../design/StatCard";
 import "../../design/Table.css";
+import type { EndpointWithHealth } from "../../api/types";
 import { formatDateTime, formatRelativeTime } from "../../lib/format";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -78,32 +80,53 @@ export function Overview() {
     withSuccessRate.length === 0
       ? null
       : withSuccessRate.reduce((sum, e) => sum + e.recent_success_rate!, 0) / withSuccessRate.length;
-  const needingAttention = endpoints.filter((e) => e.status === "halted" || e.status === "paused");
+  const haltedCount = endpoints.filter((e) => e.status === "halted").length;
+  const pausedCount = endpoints.filter((e) => e.status === "paused").length;
+  // Halted first — it's the more severe state (attempts exhausted, live
+  // traffic stuck) versus paused (a deliberate, reversible no-op) — so a
+  // support engineer scanning this list top-down sees the worse problems
+  // first rather than in whatever order the API happened to return them.
+  const severity: Record<EndpointWithHealth["status"], number> = { halted: 0, paused: 1, active: 2 };
+  const needingAttention = endpoints
+    .filter((e) => e.status === "halted" || e.status === "paused")
+    .sort((a, b) => severity[a.status] - severity[b.status]);
 
   return (
     <div>
       <h1 style={{ fontSize: 28, marginBottom: 4 }}>Delivery health</h1>
-      <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 20 }}>Polling every 3s · {backend.label}</p>
+      <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 20 }}>
+        Polling every 3s · <strong style={{ fontWeight: 600 }}>{backend.label}</strong>
+      </p>
 
       {isLoading && <LoadingState />}
       {firstError && <ErrorState message={`Failed to load overview: ${(firstError as Error).message}`} />}
 
       {!isLoading && !firstError && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+          <div className="app-grid-auto" style={{ marginBottom: 24 }}>
             <StatCard
               label="Events published (1h)"
               value={countLabel(recentEventsQuery.data!.events.length, recentEventsQuery.data!.next_cursor !== null)}
             />
-            <StatCard label="Deliveries pending" value={pendingTotal} />
+            <StatCard
+              label="Deliveries pending"
+              value={pendingTotal}
+              caption={`across ${endpoints.length} endpoint${endpoints.length === 1 ? "" : "s"}`}
+            />
             <StatCard
               label="Success rate (endpoint avg)"
               value={avgSuccessRate === null ? "—" : `${Math.round(avgSuccessRate * 100)}%`}
+              caption={`${withSuccessRate.length} of ${endpoints.length} reporting`}
             />
-            <StatCard label="Endpoints needing you" value={needingAttention.length} />
+            <StatCard
+              label="Endpoints needing you"
+              value={needingAttention.length}
+              tone={needingAttention.length > 0 ? "danger" : "neutral"}
+              caption={needingAttention.length > 0 ? `${haltedCount} halted · ${pausedCount} paused` : undefined}
+            />
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 24 }}>
+          <div className="app-grid-split">
             <div>
               <h2 style={{ fontSize: 18, marginBottom: 12 }}>Needs attention</h2>
               {needingAttention.length === 0 ? (
@@ -152,7 +175,9 @@ export function Overview() {
                           <td className="app-mono">{event.id}</td>
                           <td>{event.type}</td>
                           <td>{formatDateTime(event.created_at)}</td>
-                          <td>{event.status}</td>
+                          <td>
+                            <Badge tone={event.status === "expanded" ? "accent" : "neutral"}>{event.status}</Badge>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
