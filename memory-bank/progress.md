@@ -60,6 +60,18 @@ not a replacement for it.
   what each closing scenario proves. **Found and fixed a real R-11 violation** in the delivery
   claim query via chaos testing (see gotchas below) — this is exactly the kind of bug this
   ticket's whole purpose was to catch.
+- **Go — schema, scaffolding & endpoint management API** (`#22`, first Go-track ticket):
+  `go/internal/db/migrations/001_init.sql` matches Node's current schema exactly, with
+  `deliveries.seq` as a plain `BIGSERIAL` column from the start (one migration, not two, since Go
+  has no pre-seq history — see `docs/adr/0007`). Stdlib `net/http` (Go 1.22+ method+wildcard
+  `ServeMux`, no framework) and `pgx`/`pgxpool` (no ORM), both confirmed with the user over
+  `chi`/`lib/pq`. All six endpoint routes (register/list/detail/pause/resume/rotate-secret),
+  Bearer auth, R-2 SSRF validation, R-25 health fields, R-14 resume disclosure — same behavior as
+  Node's `#16`. 18 tests against a real Postgres instance (`webhooks_go_test`, port 5533) via
+  `net/http/httptest`, plus a live curl smoke test. `/code-review` found and fixed two real
+  Node-contract divergences (401-vs-404 on unauthenticated+unmatched paths; whitespace validation
+  stricter than Node's zod schemas) — see `activeContext.md` for detail. Go's Postgres runs on
+  port 5533, API on 8090.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -76,9 +88,10 @@ Compose deployment. Node is done.
 
 ## What doesn't exist yet
 
-- **Go**: the entire stack (`#22-27`), mirroring Node ticket-for-ticket — including every
-  review-driven fix, not the pre-review design. The Go schema must match Node's *current*
-  schema exactly: `001_init.sql` **plus** `002_deliveries_seq.sql` (`deliveries.seq`). Go's own
+- **Go**: `#22` (schema, scaffolding, endpoint management API) is done — see "What works" above.
+  `#23`-`#27` (publish/expansion, delivery worker, replay, visibility, test suite & deployment)
+  are not yet built, mirroring Node ticket-for-ticket including every review-driven fix, not the
+  pre-review design. There's no `go/cmd/worker/` yet — `#23` needs to add one. Go's own
   "Test suite & deployment" ticket (`#27`) must build the identical PRD §8 suite — see
   `activeContext.md`'s "What just happened" for the full shape `#21` established (`make test`/
   `properties`/`chaos`/`load`/`verify`, real spawned processes/signals for chaos, real spawned

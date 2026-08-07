@@ -24,13 +24,26 @@ not aspirational, only what's actually true right now.
   Requires `SECRET_ENCRYPTION_KEY` (32-byte, base64) in env — no fallback, throws on startup if
   missing or wrong length.
 
-## Go stack (`go/`) — not started
+## Go stack (`go/`) — schema/scaffolding/endpoint-management API built (`#22`)
 
-No decisions made yet beyond what's in `DECISIONS.md` (same schema, same mechanisms, same REST
-contract as Node). When scaffolding starts: **avoid port 5532** (Node's) and avoid re-colliding
-with whatever else is running locally — check with `lsof -nP -iTCP:<port> -sTCP:LISTEN` before
-picking a port, the same way Node's setup discovered the 5433 conflict. A reasonable next choice
-is 5533 for Postgres, 8080 for the API, but verify against what's actually free at build time.
+- **Language/runtime**: Go 1.26 (installed via Homebrew — wasn't present on the dev machine when
+  `#22` started).
+- **HTTP**: stdlib `net/http`, Go 1.22+'s method+`{wildcard}` `ServeMux` — no framework
+  (confirmed with the user over `chi`).
+- **DB driver**: `pgx`/`pgxpool` — no ORM, plain SQL, same posture as Node's `pg` (confirmed with
+  the user over `lib/pq`+`database/sql`).
+- **Migrations**: hand-written `.sql` files under `internal/db/migrations/`, embedded into the
+  binary via `go:embed` (`internal/db/migrate.go`) and applied by `cmd/migrate` — unlike Node's
+  Dockerfile, no separate "copy migrations into the image" step is needed.
+- **Local Postgres port**: **5533** — Node's 5532, and 5432/5433, were already taken.
+- **API port**: **8090** — Node's 3000 and local ports 8080-8083 were already taken.
+- **Auth**: same as Node — tenants seeded out-of-band via `go run ./cmd/seed`, no signup route.
+- **Crypto**: `internal/crypto` — `HashAPIKey` (SHA-256) and `EncryptSecret`/`DecryptSecret`
+  (AES-256-GCM, same `iv || authTag || ciphertext` base64 layout as Node's). Key passed directly
+  into `api.NewServer` (via `config.SecretEncryptionKey()`, required, no fallback) rather than
+  read from a package-level global — cleaner dependency injection than Node's approach.
+- **Not yet built**: `go/cmd/worker/` doesn't exist yet (`#23` adds it), nor do `#23`-`#27`'s
+  mechanisms (publish/expansion, delivery, replay, visibility, PRD §8 test suite).
 
 ## Frontend (`frontend/`) — not started
 

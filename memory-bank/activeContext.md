@@ -6,101 +6,96 @@ issue #1) and `git log`, then fix this file.
 
 ## Current phase
 
-**The entire Node track is done.** All six Node tickets (`#16`-`#21`) are built, merged, and
-verified. Node has a complete, live-verified publish → expand → deliver → replay → read
-pipeline, a full PRD §8 acceptance suite (`make test`/`properties`/`chaos`/`load`/`verify`), a
-real clone-to-run `node/README.md`, and a validated Docker Compose deployment. All 17 original
-`REVIEW.md` findings are genuinely `Fixed`. Nothing left to do on Node unless the Go/primary-
-build comparison surfaces something. Go (`#22-27`) and the frontend (`#28-30`) haven't started —
-these are next.
+**The Node track is done.** The Go track has started: ticket `#22` ([Go] Schema, scaffolding &
+endpoint management API) is built, merged, and verified — the schema and the endpoint-management
+REST surface exist at `go/`. Tickets `#23`-`#27` (publish/expansion, delivery worker, replay,
+visibility, test suite & deployment) are not yet built. The frontend (`#28-30`) hasn't started.
 
 ## What just happened (most recent session)
 
-- **`#21` — [Node] Test suite & deployment built and merged** (MR !6, branch
-  `21-node-test-suite-deployment`, off an up-to-date `main` after `#20`'s MR !5 was merged on
-  request). This was the largest ticket in the map — four distinct testing paradigms. Confirmed
-  tooling choices with the user first: hand-written seeded-PRNG invariants over `fast-check`
-  (only ~3 invariants, not worth a new dependency), hand-rolled Node/TS load scripts over
-  `autocannon` (the fairness scenarios need custom two-tenant-simultaneously shapes a generic
-  load tool isn't suited to).
-  - **`make test`**: F-3 secret rotation overlap (`rotation.overlap.test.ts` — signs with both
-    secrets throughout the window, never halts, fails after expiry), backoff-schedule
-    reconstruction from real `attempts` timestamps (`backoff.schedule.test.ts` — halts exactly
-    on the `maxAttempts`-th failure), paused-endpoint exclusion (R-4), a slow-loris receiver
-    (trickles the body forever — distinct from a merely-delayed response), and a
-    conforming-receiver fixture (`conformingReceiver.ts`/`.test.ts`, F-13/R-20 — proves a replay
-    of a previously-*failed* event is genuinely reprocessed, not silently no-op'd by a receiver
-    that dedupes correctly on success).
-  - **`make properties`** (`test/properties/`, seeded via `prng.ts`'s mulberry32 — every run
-    logs its seed, reproducible via `PROPERTY_TEST_SEED`): seq order under racing concurrent
-    expansion workers, repeated publish-key idempotency, replay crash-safety (retries before
-    expansion still land exactly once).
-  - **`make chaos`** (`node/chaos/`, real spawned processes, real `SIGKILL`/`SIGSTOP`/
-    `SIGCONT`): kill-mid-delivery, F-2's stall-fencing (the actual `SIGSTOP` → reclaim → `SIGCONT`
-    → dropped-write scenario, not simulated), partition-head-blocked-then-drains, crash-after-
-    successful-send, and `expansion-crash-order` (a real process `SIGKILL`ed while holding a
-    tenant's expansion advisory lock — proves `docs/adr/0001`'s "no lease needed" claim under an
-    actual crash).
-  - **`make load`** (`node/load/`, real spawned api/worker pool): publish/replay latency flat
-    (10→10,000 subscribers, 100→10,000-delivery windows), noisy-neighbor volume fairness, F-5's
-    tarpit-tenant bound — **measured ~1020-1150ms against a 1000ms outbound timeout**, landing
-    almost exactly on `docs/adr/0004`'s "roughly one outbound-timeout cycle."
-  - **A real, previously-undetected bug found via chaos testing, not inspection**: the delivery
-    claim query picked the oldest *eligible* pending delivery rather than the true head, so a
-    later delivery could jump the queue while the head was mid-backoff — a genuine R-11
-    violation. Fixed in `node/src/worker/delivery.ts` (head fetched unconditionally, eligibility
-    checked in application code), regression-covered in `delivery.claimDelivery.test.ts`.
-  - **A real, non-obvious infrastructure bug**: `tsx`'s own CLI re-execs into a *second* inner
-    node process to satisfy Node's loader-hook API — `spawn()` only gets a handle to the outer
-    wrapper, and `SIGKILL` is uncatchable, so a killed wrapper can't relay it to its child,
-    leaving the real worker process orphaned and un-killable. Fixed by invoking `node` directly
-    with `tsx`'s loader flags, bypassing the wrapper — see `progress.md`'s gotchas.
-  - Chaos/load scenarios can't deliver to local receivers through the *real* `src/worker.ts`
-    (its SSRF check correctly rejects loopback) — solved with a dedicated,
-    never-shipped `chaos/worker-entrypoint.ts` mirroring the real poll loop exactly except for
-    an injected permissive resolver, via the same `DeliveryCycleDeps` seam the vitest suite uses.
-  - **Full Docker Compose stack built and validated end-to-end** — real delivery to a real
-    external receiver through the actual containers, not just local `tsx` dev mode.
-  - `node/README.md` rewritten from an interim stub into the real clone-to-run guide — every
-    command and curl example in it was actually run and checked against real output, including
-    the HMAC verification snippet (computed and matched byte-for-byte against a live signature).
-  - `/code-review` (Standards + Spec axes) found and fixed two real issues: (1) standards —
-    `chaos/harness.ts` and `load/harness.ts` had near-identical database-bootstrap/polling/
-    evidence-writing code with no shared module, extracted into `node/scripts/scenarioHarness.ts`;
-    (2) spec — PRD §8's concurrent-expansion-ordering row names *both* `make chaos` and
-    `make properties`, but only the properties half existed — added `expansion-crash-order.ts`.
-  - Added `LEASE_MIN_DURATION_MS` (`node/src/config.ts`) — the lease-duration floor was
-    hardcoded at 30s with no env override, unlike every other timing knob, which would have
-    made every lease-expiry chaos scenario take 30s+ regardless of other config.
+- **`#22` — [Go] Schema, scaffolding & endpoint management API built and merged** (MR !7, branch
+  `22-go-schema-scaffolding-endpoint-api`, off an up-to-date `main` after `#21`'s MR !6). First
+  Go-track ticket — installed Go 1.26 via Homebrew (wasn't present on the dev machine) and
+  confirmed two tooling forks with the user before scaffolding: stdlib `net/http` (Go 1.22+
+  method+`{wildcard}` `ServeMux` routing) over `chi`, and `pgx`/`pgxpool` over `lib/pq`+
+  `database/sql`. Both chosen to keep the stack dependency-light, matching Node's "no ORM, no
+  framework beyond what's load-bearing" precedent.
+  - **Schema** (`go/internal/db/migrations/001_init.sql`): matches Node's *current* schema
+    exactly — all five tables, same columns/constraints/indexes — but `deliveries.seq` is a plain
+    `BIGSERIAL` column from the start (`docs/adr/0007`) in one migration file, not a second
+    `ALTER TABLE` the way Node's `002_deliveries_seq.sql` needed, since Go never had a pre-seq
+    schema to migrate away from. Migrations are embedded into the binary via `go:embed` (a
+    Go-specific simplification over Node's Dockerfile, which has to separately copy the
+    migrations directory into the image).
+  - **Endpoint management API**: all six routes (register/list/detail/pause/resume/
+    rotate-secret), Bearer auth resolving to `tenant_id` (`internal/auth`), R-2 SSRF-defense URL
+    validation (`internal/validation`, same denylist logic as Node's `validation/url.ts`), R-25
+    health fields (queue_depth/oldest_pending_at/recent_success_rate, same subquery shape as
+    Node's `HEALTH_SELECT`), R-14/`REVIEW.md` F-12 resume disclosure
+    (`skipped_failed_delivery_ids` computed identically regardless of prior status). Credentials:
+    SHA-256 for API keys, AES-256-GCM for signing secrets (`internal/crypto`) — same layout as
+    Node's (`iv || authTag || ciphertext`, base64), verified with a round-trip unit test.
+  - Verified: `go vet` + `gofmt` clean, 18 tests (`go test ./...`) against a real Postgres
+    instance (`webhooks_go_test`, port 5533) via `net/http/httptest` — no mocks, same seam
+    pattern Node used (supertest → httptest). Live curl smoke test against a running server and
+    real dev Postgres, every route exercised including R-2 rejection.
+  - **`/code-review` (Standards + Spec axes) found and fixed two real Node-contract
+    divergences**, both regression-tested:
+    1. Unauthenticated requests to an *unmatched* path were returning 404 instead of 401 — Go's
+       original route table only wrapped the six known routes in `requireTenant`, leaving the
+       catch-all unauthenticated. Node's `app.use(requireTenant, endpointsRouter, ...)` runs
+       before its own 404 fallback, so *every* non-`/healthz` request needs a valid key first,
+       matched-route-or-not. Fixed by nesting the whole route table (including its own 404
+       handler) inside `requireTenant`.
+    2. Registration validation was stricter than Node's zod schemas for whitespace-only input —
+       Go had added `strings.TrimSpace(...) == ""` checks that reject inputs Node's
+       `z.string().min(1)` (a raw length check) accepts. Fixed to match Node's raw-length
+       semantics exactly: a whitespace-only `url` now correctly falls through to
+       `url_not_allowed` (not a stricter `invalid_request`), and a whitespace-only `event_types`
+       entry is now accepted, same as Node.
+    - Standards axis also flagged (fixed): duplicated `pgx.ErrNoRows→404`/`else→500`
+      error-handling repeated across every handler (extracted a shared `fail()` helper), a
+      repeated 6-column row-scan (extracted `scanEndpointRow`, mirroring the existing
+      `scanEndpointHealthRow`), missing doc comments on several exported identifiers, and a
+      `fmt.Println`/`log.Printf` logging-idiom inconsistency in `db/migrate.go`.
+  - **Port choices**: Go's isolated Postgres runs on host port **5533** (Node's is 5532), API on
+    **8090** — 5432/5433/5532 and 8080-8083 were all already taken on the dev machine, confirmed
+    via `lsof` before picking.
 
 ## Next steps
 
-- `#22` — [Go] Schema, scaffolding & endpoint management API (mirrors `#16`, unblocked, fully
-  independent of the Node track). **The Go schema must include `deliveries.seq` from the start**
-  (not just mirror `001_init.sql` — also apply `002_deliveries_seq.sql`'s change), since both
-  stacks must implement `docs/adr/0007` identically. Also: `GET /endpoints/:id/deliveries`'s
-  `after`/seq-cursor convention (deliberately different from every other list route) must match
-  exactly for the shared frontend (ADR-008) to work against either backend. And: the delivery
-  claim query bug found in `#21` (jumping the queue past a backing-off head) is a design-level
-  gotcha the Go implementation must not repeat — see `progress.md`'s gotchas.
-- `#28` — Frontend: API client & endpoint management UI (buildable now against the fixed REST
-  contract — every route across `#16`-`#21` is available and live-verified).
-- **Primary-build designation** (ticket `#14`'s decision) can now actually be measured once Go
-  exists — Node's `make load` results are captured in `evidence/load/` as a baseline to compare
-  against.
+- `#23` — [Go] Publish & async expansion (mirrors Node's `#17`, unblocked). `POST /events` with
+  `Idempotency-Key` idempotency (ON CONFLICT + fallback SELECT, same bug class Node's ticket
+  caught — a naive `ON CONFLICT DO NOTHING` returns zero rows on conflict, so a follow-up SELECT
+  is required to return the *original* event's id/status) and the worker's expansion cycle using
+  `docs/adr/0001`'s per-tenant `pg_try_advisory_xact_lock` serialization. Will need a Go worker
+  entrypoint (`go/cmd/worker/`, doesn't exist yet) and pgx's equivalent of Node's `worker.ts`
+  poll loop.
+- `#24` — [Go] Delivery worker: ordering, crash recovery, fairness, signing, backoff & halt
+  (mirrors Node's `#18`). **Must not repeat the R-11 claim-query bug** found in Node's `#21` via
+  chaos testing — see `progress.md`'s gotchas: the true head (lowest `seq`) must always be
+  fetched unconditionally, with `next_attempt_at` eligibility checked in application code, never
+  filtered in the claim query's `WHERE` clause.
+- `#25`-`#27` — [Go] Replay, Visibility & read API, Test suite & deployment (mirror Node's
+  `#19`-`#21`). `#27` must build the identical PRD §8 acceptance suite shape Node's `#21`
+  established (`make test`/`properties`/`chaos`/`load`/`verify`, real spawned processes/signals
+  for chaos, real spawned api/worker for load) — Go's process-signal handling will differ from
+  Node's `tsx`-wrapper gotcha (see `progress.md`), but needs its own equivalent verification.
+- `#28` — Frontend: API client & endpoint management UI (buildable now against either backend's
+  fixed REST contract — Go's `#22` gives it a second real backend to target, not just Node's).
+- **Primary-build designation** (ticket `#14`'s decision) still needs Go's full `make load`
+  result once `#27` exists, to compare against Node's baseline in `evidence/load/`.
 
 ## Open questions / risks being watched
 
 - **C-2 (time spent) still needs the user's input** — flagged in `REVIEW.md`, not answered.
 - Timebox: building two full implementations was a deliberate scope choice, with an explicit
   accepted fallback now written into `DECISIONS.md`'s Submission section (ship Node alone if Go
-  isn't at parity by the timebox's midpoint).
-- The unit/integration test suite (vitest, real Postgres) deliberately does **not** cover real
-  multi-worker concurrency races (two processes actually contending over one endpoint's busy
-  flag, or two workers racing to expand the same replay) — explicitly deferred to `#21`'s chaos
-  suite, same precedent set when `#17` was built. `#18`'s `claimDelivery` does have one
-  concurrency test (two *different* endpoints claimed in parallel via `Promise.all` against the
-  real pool), but not a same-endpoint race.
+  isn't at parity by the timebox's midpoint). Go now has its first ticket done — worth revisiting
+  this checkpoint once a few more Go tickets land.
+- The Go unit/integration test suite (`go test`, real Postgres) deliberately does **not** yet
+  cover real multi-worker concurrency races — same deferral Node made until its own `#21`'s
+  chaos suite; Go's `#27` will need the equivalent.
 - **`docs/adr/` numbering (`0001`-`0007`) and the wayfinder map's own decision numbering
   (`ADR-001` through `ADR-008`, referenced in the map's Decisions-so-far section and some older
   code comments) are two different numbering spaces that happen to look identical.** Already
