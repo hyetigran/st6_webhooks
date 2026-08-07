@@ -67,7 +67,7 @@ not a replacement for it.
   `ServeMux`, no framework) and `pgx`/`pgxpool` (no ORM), both confirmed with the user over
   `chi`/`lib/pq`. All six endpoint routes (register/list/detail/pause/resume/rotate-secret),
   Bearer auth, R-2 SSRF validation, R-25 health fields, R-14 resume disclosure — same behavior as
-  Node's `#16`. 18 tests against a real Postgres instance (`webhooks_go_test`, port 5533) via
+  Node's `#16`. 19 tests against a real Postgres instance (`webhooks_go_test`, port 5533) via
   `net/http/httptest`, plus a live curl smoke test. `/code-review` found and fixed two real
   Node-contract divergences (401-vs-404 on unauthenticated+unmatched paths; whitespace validation
   stricter than Node's zod schemas) — see `activeContext.md` for detail. Go's Postgres runs on

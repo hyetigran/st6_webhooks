@@ -35,7 +35,7 @@ visibility, test suite & deployment) are not yet built. The frontend (`#28-30`) 
     (`skipped_failed_delivery_ids` computed identically regardless of prior status). Credentials:
     SHA-256 for API keys, AES-256-GCM for signing secrets (`internal/crypto`) — same layout as
     Node's (`iv || authTag || ciphertext`, base64), verified with a round-trip unit test.
-  - Verified: `go vet` + `gofmt` clean, 18 tests (`go test ./...`) against a real Postgres
+  - Verified: `go vet` + `gofmt` clean, 19 tests (`go test ./...`) against a real Postgres
     instance (`webhooks_go_test`, port 5533) via `net/http/httptest` — no mocks, same seam
     pattern Node used (supertest → httptest). Live curl smoke test against a running server and
     real dev Postgres, every route exercised including R-2 rejection.
