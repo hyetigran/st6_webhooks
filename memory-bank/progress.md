@@ -125,6 +125,21 @@ not a replacement for it.
   running stack). Found and fixed two real bugs while live-verifying — see gotchas below.
   `/code-review`'s Spec axis found zero issues; Standards axis found real scenario-code
   duplication and a genuine `sync.Once` bug in test setup, both fixed in a follow-up commit.
+- **Frontend — API client & endpoint management UI** (`#28`, foundation ticket for the frontend
+  track): `frontend/` (Vite + React + TS + TanStack Query + React Router). `frontend/src/api/client.ts`
+  (TDD'd) is a typed client for all 12 Shared REST API contract routes — Bearer auth (header-only),
+  `Idempotency-Key` on publish/replay, cursor pagination (`before` on most list routes, `after` on
+  the endpoint-queue view per `docs/adr/0007`), structured `{error:{code,message}}` parsed into a
+  typed `ApiError`. PRD §7 surface 1 (`frontend/src/pages/console/Endpoints.tsx`): list with
+  health, register form, pause/resume, rotate-secret (secret shown once alongside
+  `overlap_expires_at`, R-3/R-14 disclosures both correctly surfaced). A runtime backend switcher
+  (`frontend/src/lib/backend.tsx`, Node `:3000`/Go `:8090`, persisted) + tenant-API-key auth
+  context (`frontend/src/lib/auth.tsx`) let one build serve either backend, verified live against
+  both. Design (`frontend/src/design/`) closely follows the mockup pasted at the repo root — exact
+  tokens (Barlow/Barlow Condensed, color palette, zero-border-radius) extracted via computed-style
+  inspection of its live-rendered pages, not eyeballed — also built the marketing landing page as
+  agreed bonus scope beyond PRD §7's 4 surfaces. Live-verified end to end in a real browser against
+  both real running backends: registered/paused/resumed/rotated an endpoint through each.
 - **Full documentation set, adversarially reviewed**: `ARCHITECTURE.md`, `DECISIONS.md`,
   `CONTEXT.md`, `COMPARISON.md`, `PRD.md` all went through a 17-finding review (`REVIEW.md`) and
   came out corrected — this isn't just "written," it's been checked for internal consistency,
@@ -141,8 +156,9 @@ real external infrastructure (httpbin.org, postman-echo.com), real historical da
 
 ## What doesn't exist yet
 
-- **Frontend**: entire SPA (`#28-30`) — buildable now against the fixed REST contract, every
-  route across both `#16`-`#21` and `#22`-`#27` live-verified.
+- **Frontend**: `#28` (API client + endpoint management UI) is done — see "What works" above.
+  `#29` (event/delivery detail, endpoint queue) and `#30` (replay UI, resume disclosure, polish)
+  remain, both buildable now against `#28`'s API client/design system/backend-switcher plumbing.
 - **`README.md`**: the *final submission* root version is still not started — needs primary-
   build designation (`#14`). `node/README.md` (owned by `#21`) and `go/README.md` (owned by
   `#27`) are both done, each a real clone-to-run guide for its own stack; the root `README.md`
@@ -322,6 +338,34 @@ real external infrastructure (httpbin.org, postman-echo.com), real historical da
   before committing). Fixed by namespacing Go's evidence under `evidence/go/{chaos,load}/`
   (Node's stays at the original flat `evidence/{chaos,load}/`, untouched, since it already
   shipped) — if a third stack is ever added, it needs its own namespace too, not the flat path.
+- **Neither backend had CORS configured until `#28`** — both Node's and Go's REST APIs were
+  built and tested entirely via same-origin tools (curl, `supertest`/`httptest`, the other
+  backend's own test suite), so the total absence of `Access-Control-Allow-*` handling was never
+  exercised until `#28` pointed a real browser-based `frontend/` at them cross-origin (a
+  different port at minimum). The browser's CORS preflight (`OPTIONS`) never carries the
+  `Authorization` header, so `requireTenant`/`RequireTenant` rejected every preflight with 401
+  before a CORS middleware could even run — fixed by installing `cors` (Node,
+  `node/src/app.ts`) / a small stdlib middleware (Go, `go/internal/api/server.go`'s `cors()`
+  method) that must run *before* the auth middleware and short-circuits `OPTIONS` itself. Both
+  default to a wildcard origin (`CORS_ORIGIN=*`, `.env.example`), deliberately safe here since
+  auth is a Bearer token in a header, not a cookie/session — a wildcard
+  `Access-Control-Allow-Origin` can't be leveraged into a cross-site *credentialed* request the
+  way it could against cookie-based auth. **Any future third stack would need the identical
+  fix** — this isn't backend-specific, it's inherent to "a browser-based SPA calls this API from
+  a different origin."
+- **TanStack Query's default `retry` (3 attempts, retries every failure including 4xx) combined
+  with a query's own `refetchInterval` can hide a persistently-failing query's error from the UI
+  indefinitely** — found in `#28` switching the frontend's backend selector to a backend the
+  signed-in API key was never issued for (a genuine 401, not transient). `useQuery`'s
+  `isLoading` (v5: `status === 'pending' && fetchStatus === 'fetching'`) goes false during each
+  retry's backoff *pause*, but `isError` doesn't go true until retries exhaust — and a
+  concurrent `refetchInterval` firing can keep nudging the query back into that pending/paused
+  limbo before retries ever exhaust, so a naive `{isLoading ? ... : isError ? ... : data ...}`
+  render can show *nothing* for a wrong-API-key case, not even after 10+ seconds. Fixed with a
+  global `QueryClient` `retry` policy (`frontend/src/main.tsx`) that inspects the thrown
+  `ApiError`'s `status` and never retries 4xx (`error.status >= 400 && error.status < 500`) —
+  correctness bugs the client can't fix by retrying shouldn't retry. **Any future query with
+  both retry and a refetch interval needs this same policy**, not just the one that surfaced it.
 - **Go's dynamic-WHERE-clause routes should build the query string by direct accumulation
   (`query += fmt.Sprintf(" AND ...", ...)`), not a `conditions []string` + `strings.Join` slice**
   — the latter mirrors Node's own shape (`node/src/routes/events.ts`'s `conditions` array) closely

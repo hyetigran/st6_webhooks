@@ -6,29 +6,34 @@ issue #1) and `git log`, then fix this file.
 
 ## Current phase
 
-**Both backend tracks are done.** Node (`#16-21`) and Go (`#22-27`) are both feature-complete and
-pass the identical PRD §8 acceptance bar. Only the frontend (`#28-30`) and the primary-build
-designation synthesis step remain before the whole map is done.
+**Both backend tracks are done; the frontend track (`#28-30`) is underway.** `#28` (API client +
+endpoint management UI) is done. `#29`/`#30` remain before the whole map is done, plus the
+primary-build designation synthesis step.
 
 ## What just happened (most recent session)
 
-- **`#27` — [Go] Test suite & deployment built and merged** (MR !12 + a follow-up code-review-fix
-  commit, branch `27-go-test-suite-deployment`, off an up-to-date `main` after `#26`'s MR !11) —
-  the last Go-track ticket. Full mechanism detail lives in `progress.md`'s "What works," not
-  repeated here.
-  - Built `make properties`/`chaos`/`load`/`verify` for the Go stack, mirroring Node's `#21`
-    shape exactly (5 chaos scenarios, 4 load scenarios, 3 property tests). Finalized
-    `docker-compose.yml` (added the `worker` service) and rewrote `go/README.md`.
-  - Found and fixed two real bugs while live-verifying `docker compose up` and a fresh clone
-    (a migration race, a missing test-db auto-create) — see `progress.md`'s gotchas.
-  - `/code-review`: Spec axis found zero issues. Standards axis found real scenario-code
-    duplication and a genuine `sync.Once` bug in test setup — both fixed in a follow-up commit,
-    re-verified with a full clean `make verify` run before merging.
+- **`#28` — Frontend: API client & endpoint management UI built and merged** (MR !13 + a
+  follow-up code-review-fix commit, branch `28-frontend-api-client-endpoint-ui`, off an
+  up-to-date `main` after `#27`'s merge) — the frontend track's foundation ticket. Full mechanism
+  detail lives in `progress.md`'s "What works," not repeated here.
+  - Scaffolded `frontend/` (Vite + React + TS + TanStack Query + React Router). TDD'd the typed
+    API client against issue #13's contract. Built PRD §7 surface 1, a runtime backend switcher,
+    and the landing page (agreed bonus scope) — design closely follows the pasted mockup, tokens
+    extracted via computed-style inspection of its live-rendered pages, not eyeballed.
+  - Found and fixed two real bugs while live-verifying against both real backends in an actual
+    browser (not curl): neither backend had CORS configured at all (the first genuine
+    cross-origin client either ever saw), and a TanStack Query retry/refetchInterval interaction
+    could hide a persistent error in permanent pending state — see `progress.md`'s gotchas.
+  - `/code-review`: Spec axis found zero issues. Standards axis found a data clump, duplicated
+    query-building logic, and silent pause/resume/rotate failures — all fixed in a follow-up
+    commit, re-verified live against both backends before merging.
 
 ## Next steps
 
-- `#28` — Frontend: API client & endpoint management UI (buildable now against either backend's
-  fixed REST contract — both backends are fully done).
+- `#29` — Frontend: event/delivery detail & endpoint queue views (PRD §7 surfaces 2-4), blocked
+  by `#28` (now satisfied) — builds directly on `#28`'s API client, design system, and
+  backend-switcher/auth plumbing.
+- `#30` — Frontend: replay UI & polish, blocked by `#28`+`#29`.
 - **Primary-build designation** (ticket `#14`'s decision) can now actually happen — both stacks
   have real `make load` evidence (`evidence/load/` for Node, `evidence/go/load/` for Go). Nobody
   has run the comparison yet; this is a synthesis step, not a new ticket, likely worth doing once
