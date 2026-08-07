@@ -1,0 +1,41 @@
+.app-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+
+.app-table thead th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.app-table tbody td {
+  padding: 12px;
+  border-bottom: 1px solid var(--color-divider);
+  vertical-align: middle;
+}
+
+.app-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.app-table tbody tr.clickable {
+  cursor: pointer;
+}
+
+.app-table tbody tr.clickable:hover {
+  background: var(--color-accent-100);
+}
+
+.app-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-accent-700);
+}

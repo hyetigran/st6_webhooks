@@ -89,6 +89,18 @@ export const server = {
   port: envInt("PORT", 3000),
 };
 
+// ADR-008: a shared React SPA calls this API from its own origin (a
+// different port at minimum, a different host in a real deployment) — a
+// browser blocks that without explicit CORS headers. Wildcard is a
+// defensible default specifically because auth here is a Bearer token in
+// a header, not a cookie/session: unlike cookie-based auth, a wildcard
+// Access-Control-Allow-Origin can't be leveraged into a cross-site
+// credentialed request (there's no ambient credential to abuse), so this
+// doesn't carry a CSRF-style implication.
+export const cors = {
+  origin: envString("CORS_ORIGIN", "*"),
+};
+
 export const worker = {
   // How long to wait before polling again after a cycle found nothing to
   // do. 0 when a cycle did find work, so the worker drains a backlog

@@ -22,7 +22,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	srv := api.NewServer(pool, key, cfg.SecretRotation)
+	srv := api.NewServer(pool, key, cfg.SecretRotation, cfg.CORS.Origin)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	log.Printf("API listening on %s", addr)

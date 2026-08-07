@@ -19,16 +19,19 @@ type Server struct {
 	pool                *pgxpool.Pool
 	secretEncryptionKey []byte
 	secretRotation      config.SecretRotationConfig
+	corsOrigin          string
 }
 
 // NewServer holds the dependencies every handler needs: the DB pool, the
-// AES-256-GCM key signing secrets are encrypted with, and the rotation
-// overlap window (docs/adr/0003).
-func NewServer(pool *pgxpool.Pool, secretEncryptionKey []byte, secretRotation config.SecretRotationConfig) *Server {
+// AES-256-GCM key signing secrets are encrypted with, the rotation
+// overlap window (docs/adr/0003), and the allowed CORS origin (ADR-008's
+// shared frontend/ SPA).
+func NewServer(pool *pgxpool.Pool, secretEncryptionKey []byte, secretRotation config.SecretRotationConfig, corsOrigin string) *Server {
 	return &Server{
 		pool:                pool,
 		secretEncryptionKey: secretEncryptionKey,
 		secretRotation:      secretRotation,
+		corsOrigin:          corsOrigin,
 	}
 }
 
@@ -66,7 +69,23 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("/", auth.RequireTenant(s.pool)(protected))
 
-	return recoverJSON(mux)
+	return recoverJSON(s.cors(mux))
+}
+
+// cors must run before requireTenant: a browser's CORS preflight (OPTIONS)
+// never carries the Authorization header, so requireTenant would reject it
+// with 401 — this answers preflights itself and never forwards them.
+func (s *Server) cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", s.corsOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, idempotency-key")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // recoverJSON mirrors app.ts's final Express error-handling middleware — a
