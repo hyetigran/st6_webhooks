@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"webhooks-go/internal/testsupport"
 )
 
 func TestRegisterEndpoint(t *testing.T) {
@@ -158,7 +160,7 @@ func TestGetEndpointIncludesHealthFields(t *testing.T) {
 	pool := setupPool(t)
 	ts := newTestServer(t, pool)
 	tenantID, apiKey := createTenant(t, pool)
-	endpointID := createEndpoint(t, pool, tenantID, []string{"order.created"}, "")
+	endpointID := createEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{})
 
 	resp := doRequest(t, http.MethodGet, ts.URL+"/endpoints/"+endpointID, apiKey, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -190,7 +192,7 @@ func TestGetEndpointIsScopedToTenant(t *testing.T) {
 	ts := newTestServer(t, pool)
 	tenantA, _ := createTenant(t, pool)
 	_, apiKeyB := createTenant(t, pool)
-	endpointID := createEndpoint(t, pool, tenantA, []string{"order.created"}, "")
+	endpointID := createEndpoint(t, pool, tenantA, []string{"order.created"}, testsupport.EndpointOptions{})
 
 	resp := doRequest(t, http.MethodGet, ts.URL+"/endpoints/"+endpointID, apiKeyB, nil)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
@@ -201,7 +203,7 @@ func TestListEndpointsPaginates(t *testing.T) {
 	ts := newTestServer(t, pool)
 	tenantID, apiKey := createTenant(t, pool)
 	for i := 0; i < 3; i++ {
-		createEndpoint(t, pool, tenantID, []string{"order.created"}, "")
+		createEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{})
 	}
 
 	resp := doRequest(t, http.MethodGet, ts.URL+"/endpoints?limit=2", apiKey, nil)
@@ -238,7 +240,7 @@ func TestPauseAndResumeEndpoint(t *testing.T) {
 	pool := setupPool(t)
 	ts := newTestServer(t, pool)
 	tenantID, apiKey := createTenant(t, pool)
-	endpointID := createEndpoint(t, pool, tenantID, []string{"order.created"}, "")
+	endpointID := createEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{})
 
 	resp := doRequest(t, http.MethodPost, ts.URL+"/endpoints/"+endpointID+"/pause", apiKey, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -265,7 +267,7 @@ func TestResumeDisclosesSkippedFailedDeliveries(t *testing.T) {
 	pool := setupPool(t)
 	ts := newTestServer(t, pool)
 	tenantID, apiKey := createTenant(t, pool)
-	endpointID := createEndpoint(t, pool, tenantID, []string{"order.created"}, "")
+	endpointID := createEndpoint(t, pool, tenantID, []string{"order.created"}, testsupport.EndpointOptions{})
 
 	failedID := createDelivery(t, pool, tenantID, endpointID, "failed")
 	// A pending delivery newer than the failed one — the failed delivery is
